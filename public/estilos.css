@@ -73,3 +73,52 @@ button:disabled {
   margin-top: 1rem;
   text-align: center;
 }
+
+label {
+  align-self: flex-start;
+  font-weight: 600;
+}
+
+.linha-nome {
+  width: 100%;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.linha-nome input {
+  flex: 1;
+  font: inherit;
+  padding: 0.6rem;
+  border: 1px solid #c9ced6;
+  border-radius: 0.5rem;
+  background: #fff;
+}
+
+h2 {
+  align-self: flex-start;
+  margin: 0.5rem 0 0;
+  font-size: 1.1rem;
+}
+
+#lista-participantes {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid #c9ced6;
+  border-radius: 0.5rem;
+  background: #fff;
+}
+
+#lista-participantes li {
+  padding: 0.6rem;
+  border-bottom: 1px solid #eef0f3;
+}
+
+#lista-participantes li:last-child {
+  border-bottom: none;
+}
+
+#lista-participantes li.voce {
+  font-weight: 600;
+}

@@ -2,7 +2,7 @@ import http from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import { idValido } from "./ids.js";
 import { criarRegistroSalas } from "./salas.js";
 
@@ -15,14 +15,24 @@ const TIPOS_DE_CONTEUDO = {
 };
 
 // `opcoes` é repassado ao registro de salas (ex.: `toleranciaMs` menor nos testes).
-export function criarServidor(opcoes = {}) {
-  const registro = criarRegistroSalas(opcoes);
+// `intervaloPingMs`: de quanto em quanto tempo verificar se cada conexão continua viva.
+export function criarServidor({ intervaloPingMs = 1000, ...opcoesRegistro } = {}) {
+  const registro = criarRegistroSalas({
+    ...opcoesRegistro,
+    // Adiado para depois do código atual, para que quem entrou receba `entrou` antes da lista.
+    aoMudar: (idSala) => queueMicrotask(() => enviarLista(registro, idSala)),
+  });
 
   const servidor = http.createServer(async (requisicao, resposta) => {
     const { pathname } = new URL(requisicao.url, "http://localhost");
 
     if (pathname === "/api/salas") {
       criarSalaPorHttp(registro, requisicao, resposta);
+      return;
+    }
+
+    if (pathname.startsWith("/api/salas/")) {
+      consultarSalaPorHttp(registro, pathname.slice("/api/salas/".length), requisicao, resposta);
       return;
     }
 
@@ -48,60 +58,105 @@ export function criarServidor(opcoes = {}) {
     });
   });
 
-  servidor.on("close", () => servidorWs.close());
+  // Quedas de rede não fecham a conexão na hora; o ping percebe em até ~2 intervalos (FR-006).
+  const verificacao = setInterval(() => {
+    for (const conexao of servidorWs.clients) {
+      if (conexao.vivo === false) {
+        conexao.terminate();
+        continue;
+      }
+      conexao.vivo = false;
+      conexao.ping();
+    }
+  }, intervaloPingMs);
+  verificacao.unref();
+
+  servidor.on("close", () => {
+    clearInterval(verificacao);
+    servidorWs.close();
+  });
   return servidor;
 }
 
-// Contrato: specs/001-criar-sala/contracts/http.md
+// Contrato: specs/002-entrar-sala-link/contracts/http.md
 function criarSalaPorHttp(registro, requisicao, resposta) {
   if (requisicao.method !== "POST") {
     responderJson(resposta, 405, { erro: "Método não permitido." });
     return;
   }
   try {
-    const { id, tokenAnfitriao } = registro.criar();
+    const { id, chave } = registro.criar();
     const protocolo = requisicao.headers["x-forwarded-proto"] ?? "http";
     const link = `${protocolo}://${requisicao.headers.host}/sala/${id}`;
-    responderJson(resposta, 201, { id, link, tokenAnfitriao });
+    responderJson(resposta, 201, { id, link, chave });
   } catch (erro) {
     console.error("Erro ao criar sala:", erro);
     responderJson(resposta, 500, { erro: "Não foi possível criar a sala. Tente novamente." });
   }
 }
 
-// Contrato: specs/001-criar-sala/contracts/websocket.md
+// Consulta antes da tela de nome: a sala existe? tem vaga? (contracts/http.md)
+function consultarSalaPorHttp(registro, idSala, requisicao, resposta) {
+  if (requisicao.method !== "GET") {
+    responderJson(resposta, 405, { erro: "Método não permitido." });
+    return;
+  }
+  const situacao = idValido(idSala) ? registro.consultar(idSala) : null;
+  if (situacao === null) {
+    responderJson(resposta, 404, { erro: "Sala não encontrada." });
+    return;
+  }
+  responderJson(resposta, 200, situacao);
+}
+
+// Contrato: specs/002-entrar-sala-link/contracts/websocket.md
 function atenderConexao(registro, conexao) {
   let idSalaAtual = null;
-
-  function recusar(codigo) {
-    conexao.send(JSON.stringify({ tipo: "erro", codigo }));
-    conexao.close();
-  }
+  conexao.vivo = true;
+  conexao.on("pong", () => (conexao.vivo = true));
 
   conexao.on("message", (dados) => {
     const mensagem = lerJson(dados.toString());
     if (mensagem?.tipo !== "entrar" || idSalaAtual !== null) {
-      recusar("mensagem-invalida");
+      recusar(conexao, "mensagem-invalida");
       return;
     }
 
-    const resultado = idValido(mensagem.idSala)
-      ? registro.entrar(mensagem.idSala, conexao, mensagem.tokenAnfitriao)
-      : null;
-    if (resultado === null) {
-      recusar("sala-inexistente");
+    const { idSala, nome, chave } = mensagem;
+    const resultado = idValido(idSala)
+      ? registro.entrar(idSala, { chave, nome, conexao })
+      : { erro: "sala-inexistente" };
+    if (resultado.erro) {
+      recusar(conexao, resultado.erro);
       return;
     }
 
-    idSalaAtual = mensagem.idSala;
-    conexao.send(
-      JSON.stringify({ tipo: "entrou", idSala: idSalaAtual, anfitriao: resultado.anfitriao }),
-    );
+    if (resultado.conexaoSubstituida) recusar(resultado.conexaoSubstituida, "aberta-em-outra-aba");
+    idSalaAtual = idSala;
+    const { participante } = resultado;
+    enviar(conexao, { tipo: "entrou", idSala, chave: participante.chave, voce: participante.id });
   });
 
   conexao.on("close", () => {
     if (idSalaAtual !== null) registro.sair(idSalaAtual, conexao);
   });
+}
+
+function enviarLista(registro, idSala) {
+  const lista = registro.listar(idSala);
+  if (lista === null) return;
+  for (const conexao of registro.conexoes(idSala)) {
+    enviar(conexao, { tipo: "participantes", lista });
+  }
+}
+
+function enviar(conexao, mensagem) {
+  if (conexao.readyState === WebSocket.OPEN) conexao.send(JSON.stringify(mensagem));
+}
+
+function recusar(conexao, codigo) {
+  enviar(conexao, { tipo: "erro", codigo });
+  conexao.close();
 }
 
 function lerJson(texto) {

@@ -1,7 +1,7 @@
 # Compartilhar tela
 
-App web para compartilhar a tela entre amigos. Crie uma sala com um clique, sem cadastro, e mande o
-link para quem você quiser.
+App web para compartilhar a tela entre amigos. Informe seu nome, crie uma sala sem cadastro e mande
+o link: quem recebe digita o nome e entra, e todos veem quem está na sala (até 6 pessoas).
 
 ## Pré-requisitos
 
