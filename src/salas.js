@@ -85,8 +85,9 @@ export function criarRegistroSalas({
       // Id público novo: a página nova não tem as conexões de voz antigas, e quem vê o id antigo
       // sumir e o novo aparecer refaz a conexão sozinho (T03, research §5).
       existente.id = gerarSegredo();
-      // Toda entrada começa com o microfone desligado, inclusive ao recarregar (FR-001).
+      // Toda entrada começa com microfone e câmera desligados, inclusive ao recarregar (FR-001).
       existente.microfoneLigado = false;
+      existente.cameraLigada = false;
       aoMudar(idSala);
       return { participante: publico(existente), conexaoSubstituida };
     }
@@ -99,6 +100,7 @@ export function criarRegistroSalas({
       nome: nomeNormalizado,
       entradaEm: Date.now(),
       microfoneLigado: false,
+      cameraLigada: false,
       conexao,
     };
     sala.participantes.set(participante.chave, participante);
@@ -135,15 +137,25 @@ export function criarRegistroSalas({
       nome: p.nome,
       anfitriao: segredosIguais(p.chave, sala.chaveAnfitriao),
       microfone: p.microfoneLigado,
+      camera: p.cameraLigada,
     }));
   }
 
-  function definirMicrofone(idSala, conexao, ligado) {
+  // Microfone e câmera seguem a mesma regra; `campo` é "microfoneLigado" ou "cameraLigada".
+  function definirEstado(idSala, conexao, campo, valor) {
     const participante = participantePorConexao(idSala, conexao);
     // Conexão já substituída ou fora da sala: o estado de quem está na sala não muda.
-    if (!participante || participante.microfoneLigado === ligado) return;
-    participante.microfoneLigado = ligado;
+    if (!participante || participante[campo] === valor) return;
+    participante[campo] = valor;
     aoMudar(idSala);
+  }
+
+  function definirMicrofone(idSala, conexao, ligado) {
+    definirEstado(idSala, conexao, "microfoneLigado", ligado);
+  }
+
+  function definirCamera(idSala, conexao, ligada) {
+    definirEstado(idSala, conexao, "cameraLigada", ligada);
   }
 
   function participantePorConexao(idSala, conexao) {
@@ -175,6 +187,7 @@ export function criarRegistroSalas({
     listar,
     conexoes,
     definirMicrofone,
+    definirCamera,
     conexaoPorId,
     idPorConexao,
   };

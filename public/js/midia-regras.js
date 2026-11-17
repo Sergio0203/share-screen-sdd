@@ -1,4 +1,4 @@
-// Regras puras da conversa por voz (sem DOM nem WebRTC), usadas por voz.js.
+// Regras puras de voz e vídeo (sem DOM nem WebRTC), usadas por midia.js.
 // Ver specs/003-conversar-por-voz/data-model.md e research.md §4.
 
 // Em cada par, só quem tem o id menor cria a oferta: assim os dois lados nunca ofertam ao mesmo
@@ -7,11 +7,12 @@ export function devoIniciar(meuId, outroId) {
   return meuId < outroId;
 }
 
-// Traduz o nome do erro de captura do navegador no tipo de mensagem a mostrar (research.md §6).
-export function classificarErroMicrofone(nomeDoErro) {
+// Traduz o nome do erro de captura (microfone ou câmera) no tipo de mensagem a mostrar
+// (specs/003-conversar-por-voz/research.md §6 e specs/004-ativar-webcam/research.md §7).
+export function classificarErroCaptura(nomeDoErro) {
   if (nomeDoErro === "NotAllowedError" || nomeDoErro === "SecurityError") return "permissao";
   if (nomeDoErro === "NotFoundError" || nomeDoErro === "OverconstrainedError") {
-    return "semMicrofone";
+    return "semDispositivo";
   }
   return "falha";
 }

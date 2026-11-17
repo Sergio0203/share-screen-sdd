@@ -135,6 +135,10 @@ function atenderConexao(registro, conexao) {
       tratarMicrofone(registro, idSalaAtual, conexao, mensagem);
       return;
     }
+    if (mensagem?.tipo === "camera" && jaEntrou) {
+      tratarCamera(registro, idSalaAtual, conexao, mensagem);
+      return;
+    }
     if (mensagem?.tipo === "sinal" && jaEntrou) {
       tratarSinal(registro, idSalaAtual, conexao, mensagem);
       return;
@@ -170,6 +174,15 @@ function tratarMicrofone(registro, idSala, conexao, { ligado }) {
     return;
   }
   registro.definirMicrofone(idSala, conexao, ligado);
+}
+
+// O estado da câmera vai para todos na lista e decide quais quadros de vídeo aparecem (T04).
+function tratarCamera(registro, idSala, conexao, { ligada }) {
+  if (typeof ligada !== "boolean") {
+    recusar(conexao, "mensagem-invalida");
+    return;
+  }
+  registro.definirCamera(idSala, conexao, ligada);
 }
 
 // Repassa ofertas, respostas e candidatos de voz a outra pessoa da mesma sala. O servidor não lê

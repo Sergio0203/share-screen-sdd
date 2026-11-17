@@ -1,5 +1,5 @@
 // Todos os textos visíveis da interface, em pt-BR (ver specs/002-entrar-sala-link/contracts/ui.md e
-// specs/003-conversar-por-voz/contracts/ui.md).
+// specs/003-conversar-por-voz/contracts/ui.md e specs/004-ativar-webcam/contracts/ui.md).
 export const TEXTOS = {
   // Página inicial e tela de nome
   seuNome: "Seu nome",
@@ -37,6 +37,22 @@ export const TEXTOS = {
   microfoneDesconectado:
     "Seu microfone foi desconectado. Verifique o microfone e clique em 'Ligar microfone' de novo.",
   naoFoiPossivelOuvir: (nome) => `Não foi possível ouvir ${nome}. Verifique sua conexão.`,
+
+  // Câmera
+  ligarCamera: "Ligar câmera",
+  desligarCamera: "Desligar câmera",
+  ligandoCamera: "Ligando câmera…",
+  cameraLigada: "câmera ligada",
+  cameraDesligada: "câmera desligada",
+  erroPermissaoCamera:
+    "Não conseguimos usar sua câmera. Para liberar, clique no ícone de cadeado ao lado do endereço do site, permita a câmera e clique em 'Ligar câmera' de novo.",
+  semCamera: "Não encontramos nenhuma câmera. Conecte uma câmera e tente de novo.",
+  erroLigarCamera:
+    "Não foi possível ligar sua câmera. Feche outros programas que possam estar usando a câmera e tente de novo.",
+  cameraDesconectada:
+    "Sua câmera foi desconectada. Verifique a câmera e clique em 'Ligar câmera' de novo.",
+  naoFoiPossivelMostrarVideo: (nome) =>
+    `Não foi possível mostrar o vídeo de ${nome}. Verifique sua conexão.`,
 
   // Telas de erro
   salaInexistente: "Esta sala não existe ou já foi encerrada.",

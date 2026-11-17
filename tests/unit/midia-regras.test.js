@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  classificarErroMicrofone,
+  classificarErroCaptura,
   compararPares,
   devoIniciar,
-} from "../../public/js/voz-regras.js";
+} from "../../public/js/midia-regras.js";
 
 const lista = (...ids) => ids.map((id) => ({ id, nome: id }));
 
@@ -51,14 +51,14 @@ test("compararPares aceita qualquer iterável de ids", () => {
 for (const [nome, esperado] of [
   ["NotAllowedError", "permissao"],
   ["SecurityError", "permissao"],
-  ["NotFoundError", "semMicrofone"],
-  ["OverconstrainedError", "semMicrofone"],
+  ["NotFoundError", "semDispositivo"],
+  ["OverconstrainedError", "semDispositivo"],
   ["NotReadableError", "falha"],
   ["AbortError", "falha"],
   ["TypeError", "falha"],
   [undefined, "falha"],
 ]) {
-  test(`classificarErroMicrofone(${nome}) → ${esperado}`, () => {
-    assert.equal(classificarErroMicrofone(nome), esperado);
+  test(`classificarErroCaptura(${nome}) → ${esperado}`, () => {
+    assert.equal(classificarErroCaptura(nome), esperado);
   });
 }

@@ -2,10 +2,11 @@
 
 App web para compartilhar a tela entre amigos. Informe seu nome, crie uma sala sem cadastro e mande
 o link: quem recebe digita o nome e entra, e todos veem quem está na sala (até 6 pessoas).
-Na sala, cada pessoa liga e desliga o próprio microfone para conversar por voz, e todos veem quem
-está com o microfone ligado.
+Na sala, cada pessoa liga e desliga o próprio microfone e a própria câmera: todos ouvem quem está
+com o microfone ligado, veem o vídeo de quem está com a câmera ligada e veem na lista o estado de
+cada um.
 
-O microfone só funciona quando o app é aberto por `https://` ou em `http://localhost`.
+Microfone e câmera só funcionam quando o app é aberto por `https://` ou em `http://localhost`.
 
 ## Pré-requisitos
 

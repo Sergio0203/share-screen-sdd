@@ -92,7 +92,7 @@ test("entrar com a chave do criador torna a pessoa anfitriã", () => {
   const { participante } = entrar(registro, id, "Ana", chave);
   assert.equal(participante.chave, chave);
   assert.deepEqual(registro.listar(id), [
-    { id: participante.id, nome: "Ana", anfitriao: true, microfone: false },
+    { id: participante.id, nome: "Ana", anfitriao: true, microfone: false, camera: false },
   ]);
 });
 
@@ -144,7 +144,7 @@ test("listar segue a ordem de entrada e não expõe chaves", () => {
     ["Ana", "Bruno", "Carla"],
   );
   for (const item of lista)
-    assert.deepEqual(Object.keys(item).sort(), ["anfitriao", "id", "microfone", "nome"]);
+    assert.deepEqual(Object.keys(item).sort(), ["anfitriao", "camera", "id", "microfone", "nome"]);
 });
 
 test("conexoes devolve as conexões dos presentes", () => {
@@ -270,6 +270,67 @@ test("substituir a conexão desliga o microfone", () => {
   registro.definirMicrofone(id, ana.conexao, true);
   entrar(registro, id, "Ana", chave);
   assert.equal(registro.listar(id)[0].microfone, false);
+});
+
+// ---------- Estado da câmera (T04) ----------
+
+test("definirCamera muda o estado na lista e avisa só quando muda", () => {
+  const { registro, mudancas } = novoRegistro();
+  const { id, chave } = registro.criar();
+  const ana = entrar(registro, id, "Ana", chave);
+  assert.equal(registro.listar(id)[0].camera, false);
+
+  mudancas.length = 0;
+  registro.definirCamera(id, ana.conexao, true);
+  assert.equal(registro.listar(id)[0].camera, true);
+  assert.deepEqual(mudancas, [id]);
+
+  registro.definirCamera(id, ana.conexao, true);
+  assert.deepEqual(mudancas, [id], "mesmo valor não avisa de novo");
+
+  registro.definirCamera(id, ana.conexao, false);
+  assert.equal(registro.listar(id)[0].camera, false);
+  assert.deepEqual(mudancas, [id, id]);
+});
+
+test("definirCamera ignora conexão desconhecida ou substituída", () => {
+  const { registro, mudancas } = novoRegistro();
+  const { id, chave } = registro.criar();
+  const antiga = entrar(registro, id, "Ana", chave);
+  entrar(registro, id, "Ana", chave);
+  mudancas.length = 0;
+
+  registro.definirCamera(id, antiga.conexao, true);
+  registro.definirCamera(id, {}, true);
+  registro.definirCamera("x".repeat(22), antiga.conexao, true);
+  assert.equal(registro.listar(id)[0].camera, false);
+  assert.deepEqual(mudancas, []);
+});
+
+test("substituir a conexão desliga a câmera", () => {
+  const { registro } = novoRegistro();
+  const { id, chave } = registro.criar();
+  const ana = entrar(registro, id, "Ana", chave);
+  registro.definirCamera(id, ana.conexao, true);
+  entrar(registro, id, "Ana", chave);
+  assert.equal(registro.listar(id)[0].camera, false);
+});
+
+test("câmera e microfone não interferem um no outro", () => {
+  const { registro } = novoRegistro();
+  const { id, chave } = registro.criar();
+  const ana = entrar(registro, id, "Ana", chave);
+  const estado = () => {
+    const { camera, microfone } = registro.listar(id)[0];
+    return { camera, microfone };
+  };
+
+  registro.definirCamera(id, ana.conexao, true);
+  assert.deepEqual(estado(), { camera: true, microfone: false });
+  registro.definirMicrofone(id, ana.conexao, true);
+  assert.deepEqual(estado(), { camera: true, microfone: true });
+  registro.definirCamera(id, ana.conexao, false);
+  assert.deepEqual(estado(), { camera: false, microfone: true });
 });
 
 // ---------- Notificações ----------

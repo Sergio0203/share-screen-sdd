@@ -4,8 +4,8 @@ import { rotularParticipantes, souAnfitriao } from "../../public/js/participante
 import { TEXTOS } from "../../public/js/textos.js";
 
 const LISTA = [
-  { id: "a", nome: "Ana", anfitriao: true, microfone: true },
-  { id: "b", nome: "Bruno", anfitriao: false, microfone: false },
+  { id: "a", nome: "Ana", anfitriao: true, microfone: true, camera: false },
+  { id: "b", nome: "Bruno", anfitriao: false, microfone: false, camera: true },
 ];
 
 test("rotularParticipantes marca você e o anfitrião, na mesma ordem", () => {
@@ -17,6 +17,8 @@ test("rotularParticipantes marca você e o anfitrião, na mesma ordem", () => {
       ehAnfitriao: true,
       microfoneLigado: true,
       rotuloMicrofone: TEXTOS.microfoneLigado,
+      cameraLigada: false,
+      rotuloCamera: TEXTOS.cameraDesligada,
     },
     {
       id: "b",
@@ -25,6 +27,8 @@ test("rotularParticipantes marca você e o anfitrião, na mesma ordem", () => {
       ehAnfitriao: false,
       microfoneLigado: false,
       rotuloMicrofone: TEXTOS.microfoneDesligado,
+      cameraLigada: true,
+      rotuloCamera: TEXTOS.cameraLigada,
     },
   ]);
 });
@@ -46,5 +50,12 @@ test("rotularParticipantes descreve o microfone de cada pessoa", () => {
   assert.deepEqual(
     rotularParticipantes(LISTA, "b").map((item) => item.rotuloMicrofone),
     ["microfone ligado", "microfone desligado"],
+  );
+});
+
+test("rotularParticipantes descreve a câmera de cada pessoa", () => {
+  assert.deepEqual(
+    rotularParticipantes(LISTA, "a").map((item) => item.rotuloCamera),
+    ["câmera desligada", "câmera ligada"],
   );
 });

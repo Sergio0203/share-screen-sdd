@@ -91,7 +91,7 @@ test("entrar com nome e a chave do criador devolve entrou e a lista com o anfitr
   const participantes = await ana.proxima();
   assert.deepEqual(participantes, {
     tipo: "participantes",
-    lista: [{ id: entrou.voce, nome: "Ana", anfitriao: true, microfone: false }],
+    lista: [{ id: entrou.voce, nome: "Ana", anfitriao: true, microfone: false, camera: false }],
   });
   ana.fechar();
 });
@@ -106,8 +106,8 @@ test("quando alguém entra, todos recebem a lista nova em ordem de entrada", asy
   assert.notEqual(bruno.entrou.chave, chave);
 
   const esperado = [
-    { id: ana.entrou.voce, nome: "Ana", anfitriao: true, microfone: false },
-    { id: bruno.entrou.voce, nome: "Bruno", anfitriao: false, microfone: false },
+    { id: ana.entrou.voce, nome: "Ana", anfitriao: true, microfone: false, camera: false },
+    { id: bruno.entrou.voce, nome: "Bruno", anfitriao: false, microfone: false, camera: false },
   ];
   assert.deepEqual(await ana.esperarLista((l) => l.length === 2), esperado);
   assert.deepEqual(await bruno.esperarLista((l) => l.length === 2), esperado);
@@ -349,6 +349,74 @@ for (const ligado of ["sim", 1, null, undefined]) {
     await cliente.fechada;
   });
 }
+
+// ---------- Estado da câmera (T04) ----------
+
+const daAna = (lista) => lista.find((p) => p.nome === "Ana");
+
+test("ligar e desligar a câmera atualiza a lista de todos", async () => {
+  const { id, ana, bruno } = await salaComAnaEBruno();
+
+  ana.enviar({ tipo: "camera", ligada: true });
+  await ana.esperarLista((l) => daAna(l).camera === true);
+  await bruno.esperarLista((l) => daAna(l).camera === true);
+
+  // Quem entra depois já recebe o estado atual.
+  const carla = await entrarNaSala(id, "Carla");
+  const listaDaCarla = await carla.esperarLista((l) => l.length === 3);
+  assert.equal(daAna(listaDaCarla).camera, true);
+  assert.equal(listaDaCarla[2].camera, false);
+
+  ana.enviar({ tipo: "camera", ligada: false });
+  await bruno.esperarLista((l) => daAna(l).camera === false);
+  await carla.esperarLista((l) => daAna(l).camera === false);
+  for (const cliente of [ana, bruno, carla]) cliente.fechar();
+});
+
+test("reconectar com a mesma chave volta com a câmera desligada", async () => {
+  const { id, chave } = await criarSala();
+  const antiga = await entrarNaSala(id, "Ana", chave);
+  antiga.enviar({ tipo: "camera", ligada: true });
+  await antiga.esperarLista((l) => l[0].camera === true);
+
+  const nova = await entrarNaSala(id, "Ana", chave);
+  const { lista } = await nova.esperarTipo("participantes");
+  assert.equal(lista[0].camera, false);
+  nova.fechar();
+});
+
+test("camera antes de entrar devolve mensagem-invalida", async () => {
+  const cliente = await conectar();
+  cliente.enviar({ tipo: "camera", ligada: true });
+  assert.equal((await cliente.proxima()).codigo, "mensagem-invalida");
+  await cliente.fechada;
+});
+
+for (const ligada of ["sim", 1, null, undefined]) {
+  test(`camera com ligada = ${JSON.stringify(ligada)} devolve mensagem-invalida`, async () => {
+    const { id } = await criarSala();
+    const cliente = await entrarNaSala(id, "Ana");
+    cliente.enviar({ tipo: "camera", ligada });
+    assert.equal((await cliente.esperarTipo("erro")).codigo, "mensagem-invalida");
+    await cliente.fechada;
+  });
+}
+
+test("câmera e microfone mudam de forma independente na lista", async () => {
+  const { ana, bruno } = await salaComAnaEBruno();
+  const estado = (l) => [daAna(l).camera, daAna(l).microfone];
+
+  ana.enviar({ tipo: "camera", ligada: true });
+  assert.deepEqual(estado(await bruno.esperarLista((l) => daAna(l).camera)), [true, false]);
+
+  ana.enviar({ tipo: "microfone", ligado: true });
+  assert.deepEqual(estado(await bruno.esperarLista((l) => daAna(l).microfone)), [true, true]);
+
+  ana.enviar({ tipo: "camera", ligada: false });
+  assert.deepEqual(estado(await bruno.esperarLista((l) => !daAna(l).camera)), [false, true]);
+  ana.fechar();
+  bruno.fechar();
+});
 
 // ---------- Expiração (T01) ----------
 

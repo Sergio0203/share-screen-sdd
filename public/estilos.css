@@ -142,3 +142,92 @@ h2 {
 .indicador-microfone.ligado {
   opacity: 1;
 }
+
+.camera[aria-pressed="true"] {
+  background: #1a7f37;
+  border-color: #1a7f37;
+  color: #fff;
+}
+
+/* ---------- Vídeos (T04) ---------- */
+
+#area-videos {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.5rem;
+}
+
+#area-videos[hidden] {
+  display: none;
+}
+
+.quadro {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  margin: 0;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  background: #1f2328;
+}
+
+.quadro video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* A própria imagem aparece como num espelho. */
+.quadro video.espelhado {
+  transform: scaleX(-1);
+}
+
+.quadro figcaption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0.25rem 0.5rem;
+  background: rgb(0 0 0 / 55%);
+  color: #fff;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.falha-video {
+  margin: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem 1rem 2rem;
+  color: #fff;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.indicador-camera {
+  position: relative;
+  display: inline-block;
+  width: 1.6rem;
+  margin-right: 0.4rem;
+  text-align: center;
+  opacity: 0.45;
+}
+
+/* Câmera desligada: ícone esmaecido e riscado na diagonal. */
+.indicador-camera:not(.ligado)::after {
+  content: "";
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  top: 50%;
+  border-top: 2px solid #1f2328;
+  transform: rotate(-45deg);
+}
+
+.indicador-camera.ligado {
+  opacity: 1;
+}
