@@ -11,6 +11,10 @@ navegador permitir). Os outros veem o compartilhamento em destaque, acima das c�
 em tela cheia; se várias pessoas compartilham ao mesmo tempo, cada um escolhe qual ver em destaque.
 Antes ou durante o compartilhamento, dá para escolher a qualidade: 720p · 30 fps, 1080p · 30 fps
 ou 1080p · 60 fps (a escolha fica lembrada no navegador).
+Para apontar algo na tela compartilhada, aperte `/` com o mouse sobre a imagem e escreva um recado
+de até 100 caracteres: ele aparece ao vivo para todos, naquele ponto da imagem e com o seu nome, e
+some 8 s depois que você para de digitar (Esc apaga na hora). Quem compartilha também vê a própria
+tela na sala e pode escrever sobre ela.
 Compartilhar exige Chrome, Edge ou Firefox de computador; pelo celular, dá para assistir.
 
 Microfone, câmera e compartilhamento só funcionam quando o app é aberto por `https://` ou em

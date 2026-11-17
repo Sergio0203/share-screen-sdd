@@ -587,3 +587,207 @@ test("nunca há dois anfitriões", () => {
   relogio.disparar(10_000);
   assert.equal(anfitrioes(registro, id).length, 1);
 });
+
+// ---------- Recados sobre o compartilhamento (T07) ----------
+
+// Sala com Ana compartilhando e Bruno assistindo; `mudancasRecados` registra cada aviso.
+function salaComRecados() {
+  const mudancasRecados = [];
+  const contexto = novoRegistro({ aoMudarRecados: (id) => mudancasRecados.push(id) });
+  const { registro } = contexto;
+  const { id } = registro.criar();
+  const ana = entrar(registro, id, "Ana");
+  const bruno = entrar(registro, id, "Bruno");
+  registro.definirTela(id, ana.conexao, { compartilhando: true, som: true });
+  const idAna = ana.participante.id;
+  const idBruno = bruno.participante.id;
+  const escrever = (conexao, dados = {}) =>
+    registro.escreverRecado(id, conexao, { alvo: idAna, x: 0.25, y: 0.75, texto: "oi", ...dados });
+  return { ...contexto, id, ana, bruno, idAna, idBruno, mudancasRecados, escrever };
+}
+
+const RECADO_MS = 8000;
+const recadosPendentes = (relogio) => relogio.duracoesPendentes().filter((ms) => ms === RECADO_MS);
+
+test("escrever cria um recado aberto com o nome vindo do servidor", () => {
+  const { registro, id, bruno, idAna, idBruno, mudancasRecados, escrever, relogio } =
+    salaComRecados();
+  escrever(bruno.conexao);
+  const [recado] = registro.listarRecados(id);
+  assert.match(recado.id, /^[A-Za-z0-9_-]{22}$/);
+  assert.deepEqual(
+    { ...recado, id: undefined },
+    {
+      id: undefined,
+      autor: idBruno,
+      nome: "Bruno",
+      alvo: idAna,
+      x: 0.25,
+      y: 0.75,
+      texto: "oi",
+      aberto: true,
+    },
+  );
+  assert.deepEqual(mudancasRecados, [id]);
+  assert.deepEqual(recadosPendentes(relogio), [RECADO_MS]);
+});
+
+test("escrever de novo atualiza o mesmo recado, mantém o ponto e reinicia os 8 s", () => {
+  const { registro, id, bruno, escrever, relogio } = salaComRecados();
+  escrever(bruno.conexao, { texto: "o" });
+  const [antes] = registro.listarRecados(id);
+  escrever(bruno.conexao, { texto: "oi!", x: 0.9, y: 0.9 });
+  const lista = registro.listarRecados(id);
+  assert.equal(lista.length, 1);
+  assert.equal(lista[0].id, antes.id);
+  assert.equal(lista[0].texto, "oi!");
+  assert.equal(lista[0].x, 0.25);
+  assert.equal(lista[0].y, 0.75);
+  assert.deepEqual(recadosPendentes(relogio), [RECADO_MS]);
+});
+
+test("8 s depois da última tecla o recado some", () => {
+  const { registro, id, bruno, escrever, relogio, mudancasRecados } = salaComRecados();
+  escrever(bruno.conexao);
+  relogio.disparar(RECADO_MS);
+  assert.deepEqual(registro.listarRecados(id), []);
+  assert.equal(mudancasRecados.length, 2);
+});
+
+test("fechar mantém o recado, reinicia os 8 s, e um novo escrever cria outro recado", () => {
+  const { registro, id, bruno, escrever, relogio } = salaComRecados();
+  escrever(bruno.conexao, { texto: "primeiro" });
+  registro.fecharRecado(id, bruno.conexao);
+  assert.deepEqual(
+    registro.listarRecados(id).map(({ texto, aberto }) => ({ texto, aberto })),
+    [{ texto: "primeiro", aberto: false }],
+  );
+  assert.deepEqual(recadosPendentes(relogio), [RECADO_MS]);
+
+  escrever(bruno.conexao, { texto: "segundo" });
+  assert.deepEqual(
+    registro.listarRecados(id).map(({ texto, aberto }) => ({ texto, aberto })),
+    [
+      { texto: "primeiro", aberto: false },
+      { texto: "segundo", aberto: true },
+    ],
+  );
+  relogio.disparar(RECADO_MS);
+  assert.deepEqual(registro.listarRecados(id), []);
+});
+
+test("apagar remove o recado aberto na hora e cancela o prazo", () => {
+  const { registro, id, bruno, escrever, relogio } = salaComRecados();
+  escrever(bruno.conexao);
+  registro.apagarRecado(id, bruno.conexao);
+  assert.deepEqual(registro.listarRecados(id), []);
+  assert.deepEqual(recadosPendentes(relogio), []);
+});
+
+test("fechar e apagar sem recado aberto não fazem nada", () => {
+  const { registro, id, bruno, mudancasRecados } = salaComRecados();
+  registro.fecharRecado(id, bruno.conexao);
+  registro.apagarRecado(id, bruno.conexao);
+  assert.deepEqual(mudancasRecados, []);
+});
+
+test("escrever sobre outro compartilhamento troca o recado aberto", () => {
+  const { registro, id, ana, bruno, idBruno, escrever, relogio } = salaComRecados();
+  escrever(bruno.conexao, { texto: "na tela da Ana" });
+  registro.definirTela(id, bruno.conexao, { compartilhando: true, som: false });
+  escrever(ana.conexao, { alvo: idBruno, texto: "da Ana" });
+  escrever(bruno.conexao, { alvo: idBruno, texto: "na minha tela" });
+  assert.deepEqual(
+    registro.listarRecados(id).map(({ texto }) => texto),
+    ["da Ana", "na minha tela"],
+  );
+  assert.deepEqual(recadosPendentes(relogio), [RECADO_MS, RECADO_MS]);
+});
+
+test("a lista segue a ordem de criação e aceita texto vazio", () => {
+  const { registro, id, ana, bruno, escrever } = salaComRecados();
+  escrever(bruno.conexao, { texto: "" });
+  escrever(ana.conexao, { texto: "segundo" });
+  escrever(bruno.conexao, { texto: "primeiro" });
+  assert.deepEqual(
+    registro.listarRecados(id).map(({ nome, texto, aberto }) => ({ nome, texto, aberto })),
+    [
+      { nome: "Bruno", texto: "primeiro", aberto: true },
+      { nome: "Ana", texto: "segundo", aberto: true },
+    ],
+  );
+});
+
+test("quando a tela para de ser compartilhada, os recados dela somem", () => {
+  const { registro, id, ana, bruno, escrever, relogio, mudancasRecados } = salaComRecados();
+  escrever(bruno.conexao);
+  registro.fecharRecado(id, bruno.conexao);
+  escrever(bruno.conexao, { texto: "outro" });
+  mudancasRecados.length = 0;
+  registro.definirTela(id, ana.conexao, { compartilhando: false });
+  assert.deepEqual(registro.listarRecados(id), []);
+  assert.deepEqual(recadosPendentes(relogio), []);
+  assert.deepEqual(mudancasRecados, [id]);
+});
+
+test("quando quem compartilha sai, os recados da tela dela somem", () => {
+  const { registro, id, ana, bruno, escrever } = salaComRecados();
+  escrever(bruno.conexao);
+  registro.sair(id, ana.conexao);
+  assert.deepEqual(registro.listarRecados(id), []);
+});
+
+test("quando quem compartilha recarrega, os recados da tela antiga somem", () => {
+  const { registro, id, ana, bruno, escrever } = salaComRecados();
+  escrever(bruno.conexao);
+  entrar(registro, id, "Ana", ana.participante.chave);
+  assert.deepEqual(registro.listarRecados(id), []);
+});
+
+test("quando quem escreve sai, só o recado aberto dela some", () => {
+  const { registro, id, bruno, escrever, relogio } = salaComRecados();
+  escrever(bruno.conexao, { texto: "fechado" });
+  registro.fecharRecado(id, bruno.conexao);
+  escrever(bruno.conexao, { texto: "aberto" });
+  registro.sair(id, bruno.conexao);
+  assert.deepEqual(
+    registro.listarRecados(id).map(({ texto }) => texto),
+    ["fechado"],
+  );
+  assert.deepEqual(recadosPendentes(relogio), [RECADO_MS]);
+  relogio.disparar(RECADO_MS);
+  assert.deepEqual(registro.listarRecados(id), []);
+});
+
+test("recados inválidos são ignorados sem aviso", () => {
+  const { registro, id, ana, bruno, idBruno, escrever, mudancasRecados } = salaComRecados();
+  escrever(bruno.conexao, { alvo: idBruno }); // Bruno não compartilha
+  escrever(bruno.conexao, { alvo: "inexistente" });
+  escrever(bruno.conexao, { x: -0.1 });
+  escrever(bruno.conexao, { y: 1.5 });
+  escrever(bruno.conexao, { x: Number.NaN });
+  escrever(bruno.conexao, { y: Number.POSITIVE_INFINITY });
+  escrever(bruno.conexao, { texto: "x".repeat(101) });
+  escrever({ nome: "intrusa" });
+  assert.deepEqual(registro.listarRecados(id), []);
+  assert.deepEqual(mudancasRecados, []);
+
+  // Um recado aberto válido não é alterado por uma atualização inválida.
+  escrever(ana.conexao, { texto: "ok" });
+  escrever(ana.conexao, { texto: "y".repeat(101) });
+  assert.deepEqual(
+    registro.listarRecados(id).map(({ texto }) => texto),
+    ["ok"],
+  );
+});
+
+test("o texto é guardado normalizado: quebras de linha viram espaços", () => {
+  const { registro, id, bruno, escrever } = salaComRecados();
+  escrever(bruno.conexao, { texto: "a\nb" });
+  assert.equal(registro.listarRecados(id)[0].texto, "a b");
+});
+
+test("listarRecados de sala inexistente devolve null", () => {
+  const { registro } = novoRegistro();
+  assert.equal(registro.listarRecados("naoExisteNaoExiste1234"), null);
+});

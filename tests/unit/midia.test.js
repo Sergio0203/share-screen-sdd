@@ -310,3 +310,31 @@ test("trocar a qualidade sem compartilhar não faz nada", async () => {
   await midia.mudarQualidade(qualidadePorId("1080p60"));
   assert.equal(midia.qualidadeAtiva(), null);
 });
+
+// ---------- A própria tela (T07) ----------
+
+test("quem compartilha tem uma prévia muda da própria tela, que some ao parar", async () => {
+  const { midia } = novaMidia();
+  midia.atualizarParticipantes([pessoa("a"), pessoa("b")], "a");
+  assert.equal(midia.telaDe("a").video, null);
+
+  await midia.compartilharTela();
+  const { video } = midia.telaDe("a");
+  assert.ok(video, "a própria tela precisa de um <video> no destaque");
+  assert.equal(video.muted, true, "o próprio som não volta para quem compartilha");
+  assert.deepEqual(video.srcObject.getTracks(), [capturas[0].trilha]);
+
+  midia.pararCompartilhamento();
+  assert.equal(midia.telaDe("a").video, null);
+  assert.equal(video.srcObject, null);
+});
+
+test("a prévia da própria tela não muda a tela recebida de outra pessoa", async () => {
+  const { midia } = novaMidia();
+  midia.atualizarParticipantes([pessoa("a"), pessoa("b", { inicio: 1, som: true })], "a");
+  await terminarFila();
+  const deB = midia.telaDe("b").video;
+  await midia.compartilharTela();
+  assert.equal(midia.telaDe("b").video, deB);
+  assert.notEqual(midia.telaDe("a").video, deB);
+});

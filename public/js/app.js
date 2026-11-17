@@ -311,7 +311,18 @@ function mostrarTelaSala(idSala, nome) {
       escolha = id;
       atualizarTela();
     },
+    // Recados (T07, contracts/websocket.md): o texto inteiro vai a cada alteração do campo.
+    aoEscreverRecado: (dados) => enviarRecado({ acao: "escrever", ...dados }),
+    aoFecharRecado: () => enviarRecado({ acao: "fechar" }),
+    aoApagarRecado: () => enviarRecado({ acao: "apagar" }),
   });
+
+  // Com a conexão fechada, o recado não sai: a pessoa fica sabendo (FR-012).
+  function enviarRecado(dados) {
+    const enviado = sala.enviar({ tipo: "recado", ...dados });
+    if (!enviado) mostrarMensagem(TEXTOS.erroEnviarRecado);
+    return enviado;
+  }
 
   // Pessoas com quem a conexão de voz e vídeo falhou, a última lista recebida e o próprio id.
   const paresSemConexao = new Set();
@@ -323,6 +334,7 @@ function mostrarTelaSala(idSala, nome) {
   let escolha = null;
   let assistindoEnviado = null;
   let compartilhando = false;
+  let ultimosRecados = [];
 
   // Avisa de quem não dá para ouvir; só importa enquanto essa pessoa está com o microfone ligado.
   function atualizarAvisoSemVoz() {
@@ -360,6 +372,8 @@ function mostrarTelaSala(idSala, nome) {
       assistindoEnviado = assistindo;
       sala.enviar({ tipo: "assistindo", id: assistindo });
     }
+    // O destaque pode ter mudado: os recados desenhados são os do compartilhamento em destaque.
+    areaTela.mostrarRecados(ultimosRecados, idProprio);
   }
 
   const botaoSom = criarElemento("button", { textContent: TEXTOS.ativarSom, hidden: true });
@@ -494,6 +508,10 @@ function mostrarTelaSala(idSala, nome) {
       atualizarVideos();
     },
     aoReceberSinal: (de, dados) => midia.receberSinal(de, dados),
+    aoReceberRecados(lista) {
+      ultimosRecados = lista;
+      areaTela.mostrarRecados(lista, idProprio);
+    },
   });
 
   return {
@@ -634,7 +652,7 @@ function mostrarAviso(texto) {
 
 // ---------- Conexão com a sala (contracts/websocket.md) ----------
 
-function conectar(idSala, nome, { aoReceberLista, aoReceberSinal }) {
+function conectar(idSala, nome, { aoReceberLista, aoReceberSinal, aoReceberRecados }) {
   const protocolo = location.protocol === "https:" ? "wss:" : "ws:";
   const conexao = new WebSocket(`${protocolo}//${location.host}/ws`);
   conexaoAtual = conexao;
@@ -655,6 +673,8 @@ function conectar(idSala, nome, { aoReceberLista, aoReceberSinal }) {
       aoReceberLista(mensagem.lista, idVoce);
     } else if (mensagem.tipo === "sinal") {
       aoReceberSinal(mensagem.de, mensagem.dados);
+    } else if (mensagem.tipo === "recados") {
+      aoReceberRecados(mensagem.lista);
     } else if (mensagem.tipo === "erro") {
       recusada = true;
       encerrarMidia();
@@ -671,8 +691,11 @@ function conectar(idSala, nome, { aoReceberLista, aoReceberSinal }) {
   });
 
   return {
+    // Devolve se a mensagem saiu: com a conexão fechada, quem chamou pode avisar a pessoa (T07).
     enviar(mensagem) {
-      if (conexao.readyState === WebSocket.OPEN) conexao.send(JSON.stringify(mensagem));
+      if (conexao.readyState !== WebSocket.OPEN) return false;
+      conexao.send(JSON.stringify(mensagem));
+      return true;
     },
   };
 }

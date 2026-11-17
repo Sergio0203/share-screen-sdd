@@ -6,12 +6,15 @@ import { subirServidor } from "./auxiliares.js";
 
 const TOLERANCIA_MS = 100;
 const INTERVALO_PING_MS = 50;
+// Curto para o teste de "some sozinho", longo o bastante para os outros testes de recado.
+const DURACAO_RECADO_MS = 1000;
 
 let servidor;
 before(async () => {
   servidor = await subirServidor({
     toleranciaMs: TOLERANCIA_MS,
     intervaloPingMs: INTERVALO_PING_MS,
+    duracaoRecadoMs: DURACAO_RECADO_MS,
   });
 });
 after(() => servidor.fechar());
@@ -625,4 +628,147 @@ test("anfitrião ausente: o papel passa para quem ficou e permanece ao reconecta
   } finally {
     await local.fechar();
   }
+});
+
+// ---------- Recados sobre o compartilhamento (T07) ----------
+
+// Ana compartilhando, Bruno assistindo; listas de participantes já consumidas.
+async function salaComAnaCompartilhando() {
+  const sala = await salaComAnaEBruno();
+  sala.ana.enviar({ tipo: "tela", compartilhando: true, som: false });
+  await sala.ana.esperarLista((l) => dePessoa(l, "Ana").tela !== null);
+  await sala.bruno.esperarLista((l) => dePessoa(l, "Ana").tela !== null);
+  sala.escrever = (dados = {}) =>
+    sala.bruno.enviar({
+      tipo: "recado",
+      acao: "escrever",
+      alvo: sala.ana.entrou.voce,
+      x: 0.5,
+      y: 0.5,
+      texto: "oi",
+      ...dados,
+    });
+  return sala;
+}
+
+const esperarRecados = (cliente) => cliente.esperarTipo("recados").then(({ lista }) => lista);
+const semId = (lista) => lista.map(({ id, ...resto }) => resto);
+
+test("recado escrito chega a todos da sala, ao vivo, e fechar/apagar atualizam a lista", async () => {
+  const { ana, bruno, escrever } = await salaComAnaCompartilhando();
+  escrever();
+  const esperado = {
+    autor: bruno.entrou.voce,
+    nome: "Bruno",
+    alvo: ana.entrou.voce,
+    x: 0.5,
+    y: 0.5,
+    texto: "oi",
+    aberto: true,
+  };
+  assert.deepEqual(semId(await esperarRecados(ana)), [esperado]);
+  const [recado] = await esperarRecados(bruno);
+  assert.match(recado.id, /^[A-Za-z0-9_-]{22}$/);
+
+  bruno.enviar({ tipo: "recado", acao: "fechar" });
+  assert.deepEqual(semId(await esperarRecados(ana)), [{ ...esperado, aberto: false }]);
+
+  escrever({ texto: "outro" });
+  await esperarRecados(ana);
+  bruno.enviar({ tipo: "recado", acao: "apagar" });
+  assert.deepEqual(semId(await esperarRecados(ana)), [{ ...esperado, aberto: false }]);
+  ana.fechar();
+  bruno.fechar();
+});
+
+test("quem entra depois recebe os recados ativos logo após entrou", async () => {
+  const { id, ana, bruno, escrever } = await salaComAnaCompartilhando();
+  escrever();
+  await esperarRecados(ana);
+  const carla = await entrarNaSala(id, "Carla");
+  assert.equal(carla.entrou.tipo, "entrou");
+  assert.deepEqual(
+    (await esperarRecados(carla)).map(({ texto }) => texto),
+    ["oi"],
+  );
+  for (const cliente of [ana, bruno, carla]) cliente.fechar();
+});
+
+test("o recado some sozinho depois do prazo", async () => {
+  const { ana, bruno, escrever } = await salaComAnaCompartilhando();
+  escrever();
+  assert.equal((await esperarRecados(ana)).length, 1);
+  assert.deepEqual(await esperarRecados(ana), []);
+  ana.fechar();
+  bruno.fechar();
+});
+
+test("quando a tela para de ser compartilhada, os recados somem", async () => {
+  const { ana, bruno, escrever } = await salaComAnaCompartilhando();
+  escrever();
+  await esperarRecados(bruno);
+  ana.enviar({ tipo: "tela", compartilhando: false });
+  assert.deepEqual(await esperarRecados(bruno), []);
+  ana.fechar();
+  bruno.fechar();
+});
+
+test("recado com formato errado é recusado com mensagem-invalida", async () => {
+  const formatos = [
+    { tipo: "recado", acao: "xyz" },
+    { tipo: "recado", acao: "escrever", alvo: "a", x: 0, y: 0, texto: 5 },
+    { tipo: "recado", acao: "escrever", alvo: "a", x: "0", y: 0, texto: "oi" },
+    { tipo: "recado", acao: "escrever", alvo: null, x: 0, y: 0, texto: "oi" },
+  ];
+  for (const mensagem of formatos) {
+    const { ana, bruno } = await salaComAnaCompartilhando();
+    bruno.enviar(mensagem);
+    assert.deepEqual(await bruno.esperarTipo("erro"), {
+      tipo: "erro",
+      codigo: "mensagem-invalida",
+    });
+    await bruno.fechada;
+    ana.fechar();
+  }
+});
+
+test("recado antes de entrar é recusado", async () => {
+  const cliente = await conectar();
+  cliente.enviar({ tipo: "recado", acao: "fechar" });
+  assert.deepEqual(await cliente.proxima(), { tipo: "erro", codigo: "mensagem-invalida" });
+  await cliente.fechada;
+});
+
+test("recado sobre quem não compartilha é ignorado e a conexão continua", async () => {
+  const { ana, bruno, escrever } = await salaComAnaCompartilhando();
+  escrever({ alvo: bruno.entrou.voce });
+  escrever({ texto: "valido" });
+  assert.deepEqual(
+    (await esperarRecados(ana)).map(({ texto }) => texto),
+    ["valido"],
+  );
+  ana.fechar();
+  bruno.fechar();
+});
+
+test("recado acima de 100 caracteres é ignorado; 100 emojis cabem; o texto não é alterado", async () => {
+  const { ana, bruno, escrever } = await salaComAnaCompartilhando();
+  escrever({ texto: "x".repeat(101) });
+  escrever({ texto: "👍".repeat(100) });
+  assert.deepEqual(
+    (await esperarRecados(ana)).map(({ texto }) => texto),
+    ["👍".repeat(100)],
+  );
+  escrever({ texto: "<b>oi</b>" });
+  assert.deepEqual(
+    (await esperarRecados(ana)).map(({ texto }) => texto),
+    ["<b>oi</b>"],
+  );
+  escrever({ texto: "a\nb" });
+  assert.deepEqual(
+    (await esperarRecados(ana)).map(({ texto }) => texto),
+    ["a b"],
+  );
+  ana.fechar();
+  bruno.fechar();
 });

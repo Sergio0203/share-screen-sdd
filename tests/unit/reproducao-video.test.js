@@ -16,12 +16,27 @@ class ElementoFalso {
     this.paused = false;
     this.vezesTocado = 0;
     this.classList = { toggle() {} };
+    this.style = {};
   }
   get conectado() {
     return this.pai === null ? this === document.body : this.pai.conectado;
   }
+  get isConnected() {
+    return this.conectado;
+  }
+  get children() {
+    return this.filhos;
+  }
+  getBoundingClientRect() {
+    return { left: 0, top: 0, width: 0, height: 0 };
+  }
+  remove() {
+    this.pai?.filhos.splice(this.pai.filhos.indexOf(this), 1);
+    this.pai = null;
+  }
   setAttribute() {}
   addEventListener() {}
+  removeEventListener() {}
   play() {
     this.paused = false;
     this.vezesTocado += 1;
@@ -52,6 +67,10 @@ function pausarVideos(elemento) {
 
 let documentoOriginal;
 beforeEach(() => {
+  // A área da tela redesenha os recados quando muda de tamanho (T07).
+  globalThis.ResizeObserver = class {
+    observe() {}
+  };
   documentoOriginal = Object.getOwnPropertyDescriptor(globalThis, "document");
   globalThis.document = {
     createElement: (tag) => new ElementoFalso(tag),
@@ -64,6 +83,7 @@ beforeEach(() => {
 afterEach(() => {
   if (documentoOriginal) Object.defineProperty(globalThis, "document", documentoOriginal);
   else delete globalThis.document;
+  delete globalThis.ResizeObserver;
 });
 
 function videoRecebido() {

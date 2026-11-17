@@ -23,6 +23,7 @@ export function criarServidor({ intervaloPingMs = 1000, ...opcoesRegistro } = {}
     ...opcoesRegistro,
     // Adiado para depois do código atual, para que quem entrou receba `entrou` antes da lista.
     aoMudar: (idSala) => queueMicrotask(() => enviarLista(registro, idSala)),
+    aoMudarRecados: (idSala) => queueMicrotask(() => enviarRecados(registro, idSala)),
   });
 
   const servidor = http.createServer(async (requisicao, resposta) => {
@@ -113,7 +114,8 @@ function consultarSalaPorHttp(registro, idSala, requisicao, resposta) {
 }
 
 // Contratos: specs/002-entrar-sala-link/contracts/websocket.md e
-// specs/003-conversar-por-voz/contracts/websocket.md
+// specs/003-conversar-por-voz/contracts/websocket.md (e as extensões até
+// specs/007-recado-na-tela/contracts/websocket.md)
 function atenderConexao(registro, conexao) {
   // Sala em que esta conexão entrou; nula até um `entrar` bem-sucedido.
   let idSalaAtual = null;
@@ -147,6 +149,10 @@ function atenderConexao(registro, conexao) {
       tratarAssistindo(registro, idSalaAtual, conexao, mensagem);
       return;
     }
+    if (mensagem?.tipo === "recado" && jaEntrou) {
+      tratarRecado(registro, idSalaAtual, conexao, mensagem);
+      return;
+    }
     if (mensagem?.tipo === "sinal" && jaEntrou) {
       tratarSinal(registro, idSalaAtual, conexao, mensagem);
       return;
@@ -172,6 +178,9 @@ function tratarEntrar(registro, conexao, { idSala, nome, chave }) {
   if (resultado.conexaoSubstituida) recusar(resultado.conexaoSubstituida, "aberta-em-outra-aba");
   const { participante } = resultado;
   enviar(conexao, { tipo: "entrou", idSala, chave: participante.chave, voce: participante.id });
+  // Quem entra vê os recados que ainda estão na tela (FR-011). Sem recados, nada é enviado.
+  const recados = registro.listarRecados(idSala);
+  if (recados.length > 0) enviar(conexao, { tipo: "recados", lista: recados });
   return true;
 }
 
@@ -213,6 +222,31 @@ function tratarAssistindo(registro, idSala, conexao, { id }) {
   registro.definirAssistindo(idSala, conexao, id);
 }
 
+// Recados sobre o compartilhamento (T07). Aqui só o formato é conferido; o registro ignora valores
+// inválidos (texto longo, alvo que não compartilha, ponto fora da imagem) sem fechar a conexão.
+function tratarRecado(registro, idSala, conexao, mensagem) {
+  const { acao } = mensagem;
+  if (acao === "escrever" && formatoDeEscreverValido(mensagem)) {
+    const { alvo, x, y, texto } = mensagem;
+    registro.escreverRecado(idSala, conexao, { alvo, x, y, texto });
+  } else if (acao === "fechar") {
+    registro.fecharRecado(idSala, conexao);
+  } else if (acao === "apagar") {
+    registro.apagarRecado(idSala, conexao);
+  } else {
+    recusar(conexao, "mensagem-invalida");
+  }
+}
+
+function formatoDeEscreverValido({ alvo, x, y, texto }) {
+  return (
+    typeof alvo === "string" &&
+    typeof texto === "string" &&
+    typeof x === "number" &&
+    typeof y === "number"
+  );
+}
+
 // Repassa ofertas, respostas e candidatos de voz a outra pessoa da mesma sala. O servidor não lê
 // `dados`; só preenche `de`, para ninguém se passar por outra pessoa.
 function tratarSinal(registro, idSala, conexao, { para, dados }) {
@@ -232,6 +266,14 @@ function enviarLista(registro, idSala) {
   if (lista === null) return;
   for (const conexao of registro.conexoes(idSala)) {
     enviar(conexao, { tipo: "participantes", lista });
+  }
+}
+
+function enviarRecados(registro, idSala) {
+  const lista = registro.listarRecados(idSala);
+  if (lista === null) return;
+  for (const conexao of registro.conexoes(idSala)) {
+    enviar(conexao, { tipo: "recados", lista });
   }
 }
 

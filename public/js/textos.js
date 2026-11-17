@@ -1,6 +1,7 @@
 // Todos os textos visíveis da interface, em pt-BR (ver specs/002-entrar-sala-link/contracts/ui.md e
 // specs/003-conversar-por-voz/contracts/ui.md e specs/004-ativar-webcam/contracts/ui.md e
-// specs/005-compartilhar-tela/contracts/ui.md e specs/006-qualidade-compartilhamento/contracts/ui.md).
+// specs/005-compartilhar-tela/contracts/ui.md e specs/006-qualidade-compartilhamento/contracts/ui.md e
+// specs/007-recado-na-tela/contracts/ui.md).
 export const TEXTOS = {
   // Página inicial e tela de nome
   seuNome: "Seu nome",
@@ -77,6 +78,13 @@ export const TEXTOS = {
   limitadaPelaTela: " (limitada pelo tamanho da tela)",
   erroQualidade:
     "Não foi possível usar essa qualidade. O compartilhamento continua na qualidade anterior.",
+
+  // Recados sobre o compartilhamento
+  dicaRecado: "Aperte / para escrever um recado",
+  rotuloCampoRecado: "Recado",
+  caracteresRestantes: (n) => (n === 1 ? "Falta 1 caractere" : `Faltam ${n} caracteres`),
+  marcaVoceTela: " (você)",
+  erroEnviarRecado: "Não foi possível enviar o recado. Verifique sua conexão e tente de novo.",
 
   // Telas de erro
   salaInexistente: "Esta sala não existe ou já foi encerrada.",

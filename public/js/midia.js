@@ -43,6 +43,8 @@ export function criarMidia({
   // Própria imagem, mostrada só para a própria pessoa (FR-005).
   let previaLocal = null;
   let trilhaTela = null;
+  // Prévia muda da própria tela, para quem compartilha vê-la no destaque (T07).
+  let previaTela = null;
   let trilhaSomTela = null;
   let qualidadeTela = null;
   // Última lista e próprio id: decidem para quem a tela é enviada.
@@ -139,6 +141,8 @@ export function criarMidia({
     video.contentHint = "motion";
     trilhaTela = video;
     trilhaSomTela = som;
+    // Só a imagem: o som da própria tela não deve tocar de volta para quem compartilha.
+    previaTela = criarVideoCom(new MediaStream([video]));
     qualidadeTela = qualidade;
     // Parou pelo botão do navegador ou o app compartilhado foi fechado (FR-005).
     video.addEventListener("ended", () => {
@@ -157,6 +161,8 @@ export function criarMidia({
     trilhaTela = null;
     trilhaSomTela = null;
     qualidadeTela = null;
+    if (previaTela) previaTela.srcObject = null;
+    previaTela = null;
     aplicarEnvioTela();
   }
 
@@ -396,6 +402,7 @@ export function criarMidia({
   }
 
   function telaDe(id) {
+    if (id === meuId && id !== null) return { video: previaTela };
     return { video: pares.get(id)?.tela.video ?? null };
   }
 

@@ -1,11 +1,18 @@
 // Decide qual compartilhamento de tela fica em destaque para cada pessoa e quais viram miniaturas
 // (ver specs/005-compartilhar-tela/data-model.md e FR-017/FR-018 da spec).
+// T07 altera a FR-004 da T05: a própria tela entra como as outras (marcada com `propria`), para que
+// quem compartilha possa apontar recados sobre ela.
 // `escolha` é o id que a pessoa escolheu clicando numa miniatura, ou null.
 export function escolherDestaque(lista, idVoce, escolha) {
-  // A própria tela nunca aparece para quem compartilha (FR-004).
   const compartilhamentos = lista
-    .filter(({ id, tela }) => tela !== null && tela !== undefined && id !== idVoce)
-    .map(({ id, nome, tela }) => ({ id, nome, som: tela.som, inicio: tela.inicio }))
+    .filter(({ tela }) => tela !== null && tela !== undefined)
+    .map(({ id, nome, tela }) => ({
+      id,
+      nome,
+      som: tela.som,
+      inicio: tela.inicio,
+      propria: id === idVoce,
+    }))
     .sort((a, b) => b.inicio - a.inicio);
 
   const escolhido = compartilhamentos.find(({ id }) => id === escolha);
