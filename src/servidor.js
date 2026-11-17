@@ -139,6 +139,14 @@ function atenderConexao(registro, conexao) {
       tratarCamera(registro, idSalaAtual, conexao, mensagem);
       return;
     }
+    if (mensagem?.tipo === "tela" && jaEntrou) {
+      tratarTela(registro, idSalaAtual, conexao, mensagem);
+      return;
+    }
+    if (mensagem?.tipo === "assistindo" && jaEntrou) {
+      tratarAssistindo(registro, idSalaAtual, conexao, mensagem);
+      return;
+    }
     if (mensagem?.tipo === "sinal" && jaEntrou) {
       tratarSinal(registro, idSalaAtual, conexao, mensagem);
       return;
@@ -183,6 +191,26 @@ function tratarCamera(registro, idSala, conexao, { ligada }) {
     return;
   }
   registro.definirCamera(idSala, conexao, ligada);
+}
+
+// Quem compartilha a tela (e se tem som); a lista decide o destaque de cada pessoa (T05).
+function tratarTela(registro, idSala, conexao, { compartilhando, som }) {
+  const valida =
+    typeof compartilhando === "boolean" && (!compartilhando || typeof som === "boolean");
+  if (!valida) {
+    recusar(conexao, "mensagem-invalida");
+    return;
+  }
+  registro.definirTela(idSala, conexao, { compartilhando, som });
+}
+
+// Qual compartilhamento a pessoa tem em destaque: quem compartilha só envia a tela para ela.
+function tratarAssistindo(registro, idSala, conexao, { id }) {
+  if (id !== null && typeof id !== "string") {
+    recusar(conexao, "mensagem-invalida");
+    return;
+  }
+  registro.definirAssistindo(idSala, conexao, id);
 }
 
 // Repassa ofertas, respostas e candidatos de voz a outra pessoa da mesma sala. O servidor não lê

@@ -62,6 +62,8 @@ export function criarRegistroSalas({
       participantes: new Map(),
       expiracao: null,
       transferencia: null,
+      // Cresce a cada compartilhamento iniciado: define qual é o mais recente (T05).
+      contadorCompartilhamentos: 0,
     };
     salas.set(id, sala);
     // Prazo para o criador conectar; sem isso, uma sala nunca aberta ficaria para sempre.
@@ -88,6 +90,8 @@ export function criarRegistroSalas({
       // Toda entrada começa com microfone e câmera desligados, inclusive ao recarregar (FR-001).
       existente.microfoneLigado = false;
       existente.cameraLigada = false;
+      existente.tela = null;
+      existente.assistindo = null;
       aoMudar(idSala);
       return { participante: publico(existente), conexaoSubstituida };
     }
@@ -101,6 +105,10 @@ export function criarRegistroSalas({
       entradaEm: Date.now(),
       microfoneLigado: false,
       cameraLigada: false,
+      // null ou { inicio, som } enquanto compartilha a tela.
+      tela: null,
+      // Id público do compartilhamento que a pessoa tem em destaque, ou null.
+      assistindo: null,
       conexao,
     };
     sala.participantes.set(participante.chave, participante);
@@ -138,6 +146,8 @@ export function criarRegistroSalas({
       anfitriao: segredosIguais(p.chave, sala.chaveAnfitriao),
       microfone: p.microfoneLigado,
       camera: p.cameraLigada,
+      tela: p.tela && { inicio: p.tela.inicio, som: p.tela.som },
+      assistindo: p.assistindo,
     }));
   }
 
@@ -156,6 +166,28 @@ export function criarRegistroSalas({
 
   function definirCamera(idSala, conexao, ligada) {
     definirEstado(idSala, conexao, "cameraLigada", ligada);
+  }
+
+  function definirAssistindo(idSala, conexao, idPublico) {
+    definirEstado(idSala, conexao, "assistindo", idPublico);
+  }
+
+  // Ver specs/005-compartilhar-tela/data-model.md ("definirTela").
+  function definirTela(idSala, conexao, { compartilhando, som }) {
+    const participante = participantePorConexao(idSala, conexao);
+    if (!participante) return;
+    if (!compartilhando) {
+      if (participante.tela === null) return;
+      participante.tela = null;
+    } else if (participante.tela === null) {
+      const sala = salas.get(idSala);
+      participante.tela = { inicio: ++sala.contadorCompartilhamentos, som };
+    } else if (participante.tela.som !== som) {
+      participante.tela.som = som;
+    } else {
+      return;
+    }
+    aoMudar(idSala);
   }
 
   function participantePorConexao(idSala, conexao) {
@@ -188,6 +220,8 @@ export function criarRegistroSalas({
     conexoes,
     definirMicrofone,
     definirCamera,
+    definirTela,
+    definirAssistindo,
     conexaoPorId,
     idPorConexao,
   };

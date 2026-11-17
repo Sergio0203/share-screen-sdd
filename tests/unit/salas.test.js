@@ -92,7 +92,15 @@ test("entrar com a chave do criador torna a pessoa anfitriã", () => {
   const { participante } = entrar(registro, id, "Ana", chave);
   assert.equal(participante.chave, chave);
   assert.deepEqual(registro.listar(id), [
-    { id: participante.id, nome: "Ana", anfitriao: true, microfone: false, camera: false },
+    {
+      id: participante.id,
+      nome: "Ana",
+      anfitriao: true,
+      microfone: false,
+      camera: false,
+      tela: null,
+      assistindo: null,
+    },
   ]);
 });
 
@@ -144,7 +152,15 @@ test("listar segue a ordem de entrada e não expõe chaves", () => {
     ["Ana", "Bruno", "Carla"],
   );
   for (const item of lista)
-    assert.deepEqual(Object.keys(item).sort(), ["anfitriao", "camera", "id", "microfone", "nome"]);
+    assert.deepEqual(Object.keys(item).sort(), [
+      "anfitriao",
+      "assistindo",
+      "camera",
+      "id",
+      "microfone",
+      "nome",
+      "tela",
+    ]);
 });
 
 test("conexoes devolve as conexões dos presentes", () => {
@@ -331,6 +347,71 @@ test("câmera e microfone não interferem um no outro", () => {
   assert.deepEqual(estado(), { camera: true, microfone: true });
   registro.definirCamera(id, ana.conexao, false);
   assert.deepEqual(estado(), { camera: false, microfone: true });
+});
+
+// ---------- Compartilhamento de tela (T05) ----------
+
+test("definirTela numera os compartilhamentos e só avisa quando muda", () => {
+  const { registro, mudancas } = novoRegistro();
+  const { id, chave } = registro.criar();
+  const ana = entrar(registro, id, "Ana", chave);
+  const bruno = entrar(registro, id, "Bruno");
+  const telaDe = (nome) => registro.listar(id).find((p) => p.nome === nome).tela;
+  assert.equal(telaDe("Ana"), null);
+  assert.equal(registro.listar(id)[0].assistindo, null);
+
+  mudancas.length = 0;
+  registro.definirTela(id, ana.conexao, { compartilhando: true, som: true });
+  assert.deepEqual(telaDe("Ana"), { inicio: 1, som: true });
+  assert.deepEqual(mudancas, [id]);
+
+  registro.definirTela(id, bruno.conexao, { compartilhando: true, som: false });
+  assert.deepEqual(telaDe("Bruno"), { inicio: 2, som: false });
+
+  mudancas.length = 0;
+  registro.definirTela(id, ana.conexao, { compartilhando: true, som: true });
+  assert.deepEqual(mudancas, [], "repetir não muda nada");
+  registro.definirTela(id, ana.conexao, { compartilhando: true, som: false });
+  assert.deepEqual(telaDe("Ana"), { inicio: 1, som: false }, "só o som muda");
+  assert.deepEqual(mudancas, [id]);
+
+  registro.definirTela(id, ana.conexao, { compartilhando: false });
+  assert.equal(telaDe("Ana"), null);
+  registro.definirTela(id, ana.conexao, { compartilhando: true, som: true });
+  assert.equal(telaDe("Ana").inicio, 3, "começar de novo ganha número novo");
+});
+
+test("definirAssistindo guarda o destaque e só avisa quando muda", () => {
+  const { registro, mudancas } = novoRegistro();
+  const { id, chave } = registro.criar();
+  const ana = entrar(registro, id, "Ana", chave);
+  mudancas.length = 0;
+
+  registro.definirAssistindo(id, ana.conexao, "x");
+  assert.equal(registro.listar(id)[0].assistindo, "x");
+  assert.deepEqual(mudancas, [id]);
+  registro.definirAssistindo(id, ana.conexao, "x");
+  assert.deepEqual(mudancas, [id]);
+  registro.definirAssistindo(id, ana.conexao, null);
+  assert.equal(registro.listar(id)[0].assistindo, null);
+});
+
+test("tela e assistindo ignoram conexão desconhecida e zeram na substituição", () => {
+  const { registro, mudancas } = novoRegistro();
+  const { id, chave } = registro.criar();
+  const antiga = entrar(registro, id, "Ana", chave);
+  registro.definirTela(id, antiga.conexao, { compartilhando: true, som: true });
+  registro.definirAssistindo(id, antiga.conexao, "x");
+
+  entrar(registro, id, "Ana", chave);
+  assert.equal(registro.listar(id)[0].tela, null);
+  assert.equal(registro.listar(id)[0].assistindo, null);
+
+  mudancas.length = 0;
+  registro.definirTela(id, antiga.conexao, { compartilhando: true, som: true });
+  registro.definirAssistindo(id, {}, "y");
+  assert.equal(registro.listar(id)[0].tela, null);
+  assert.deepEqual(mudancas, []);
 });
 
 // ---------- Notificações ----------

@@ -3,8 +3,11 @@ import { copiarAoCriar, copiarLink } from "./copiar.js";
 import { NOME_MAXIMO, motivoNomeInvalido, normalizarNome } from "./nome.js";
 import { rotularParticipantes, souAnfitriao } from "./participantes.js";
 import { quadrosDeVideo } from "./quadros.js";
+import { mostrarQuadros } from "./area-videos.js";
+import { escolherDestaque } from "./destaque.js";
+import { criarAreaTela } from "./area-tela.js";
 import { criarMidia } from "./midia.js";
-import { classificarErroCaptura } from "./midia-regras.js";
+import { classificarErroCaptura, classificarErroCompartilhamento } from "./midia-regras.js";
 
 const DURACAO_CONFIRMACAO_MS = 2500;
 const CHAVE_NOME = "nomeExibicao";
@@ -52,6 +55,22 @@ const MICROFONE = {
     semDispositivo: TEXTOS.semMicrofone,
     falha: TEXTOS.erroLigarMicrofone,
   },
+};
+
+// Compartilhar a tela usa o mesmo botão: "ligar" é escolher o que compartilhar. Parar pelo
+// navegador é normal, por isso não há mensagem de "desconectado".
+const TELA = {
+  ligar: TEXTOS.compartilharTela,
+  desligar: TEXTOS.pararCompartilhamento,
+  ligando: TEXTOS.escolhendoCompartilhamento,
+  desconectado: null,
+  // Cancelar a escolha não é erro: nenhuma mensagem (FR-011).
+  erros: {
+    cancelado: null,
+    permissao: TEXTOS.erroPermissaoTela,
+    falha: TEXTOS.erroCompartilhar,
+  },
+  classificarErro: (erro) => classificarErroCompartilhamento(erro?.name, erro?.message),
 };
 
 const CAMERA = {
@@ -285,12 +304,23 @@ function mostrarTelaSala(idSala, nome) {
   const tituloLista = criarElemento("h2", { textContent: TEXTOS.tituloLista(0) });
   const lista = criarElemento("ul", { id: "lista-participantes" });
   const areaVideos = criarElemento("section", { id: "area-videos", hidden: true });
+  const areaTela = criarAreaTela({
+    aoEscolher(id) {
+      escolha = id;
+      atualizarTela();
+    },
+  });
 
   // Pessoas com quem a conexão de voz e vídeo falhou, a última lista recebida e o próprio id.
   const paresSemConexao = new Set();
   let ultimaLista = [];
   let idProprio = null;
   let avisoSemVoz = null;
+  // Compartilhamento que a pessoa escolheu ver em destaque (null = o mais recente) e o último
+  // `assistindo` enviado ao servidor.
+  let escolha = null;
+  let assistindoEnviado = null;
+  let compartilhando = false;
 
   // Avisa de quem não dá para ouvir; só importa enquanto essa pessoa está com o microfone ligado.
   function atualizarAvisoSemVoz() {
@@ -306,6 +336,26 @@ function mostrarTelaSala(idSala, nome) {
 
   function atualizarVideos() {
     mostrarQuadros(areaVideos, quadrosDeVideo(ultimaLista, idProprio, paresSemConexao), midia);
+    atualizarTela();
+  }
+
+  // Calcula o destaque, mostra a área da tela e avisa o servidor quando o destaque muda: quem
+  // compartilha só envia a tela para quem está assistindo (FR-017).
+  function atualizarTela() {
+    // A escolha vale enquanto aquele compartilhamento existir; depois, volta ao mais recente.
+    const escolhaAindaCompartilha = ultimaLista.some((p) => p.id === escolha && p.tela);
+    if (!escolhaAindaCompartilha) escolha = null;
+    // Só o compartilhamento em destaque é enviado a esta pessoa, então só o som dele toca (FR-019).
+    const estado = escolherDestaque(ultimaLista, idProprio, escolha);
+    areaTela.atualizar(
+      { ...estado, compartilhando },
+      { telaDe: midia.telaDe, idsComFalha: paresSemConexao },
+    );
+    const assistindo = estado.destaque?.id ?? null;
+    if (idProprio !== null && assistindo !== assistindoEnviado) {
+      assistindoEnviado = assistindo;
+      sala.enviar({ tipo: "assistindo", id: assistindo });
+    }
   }
 
   const botaoSom = criarElemento("button", { textContent: TEXTOS.ativarSom, hidden: true });
@@ -320,6 +370,7 @@ function mostrarTelaSala(idSala, nome) {
     aoMicrofoneEncerrado: () => microfone.marcarDesconectado(),
     aoCameraEncerrada: () => camera.marcarDesconectado(),
     aoChegarVideo: () => atualizarVideos(),
+    aoTelaEncerrada: () => tela.marcarDesconectado(),
   });
   midiaAtual = midia;
   botaoSom.addEventListener("click", () => midia.ativarSom());
@@ -342,15 +393,51 @@ function mostrarTelaSala(idSala, nome) {
     },
   });
 
-  // O link, o microfone, a câmera e o "Ativar som" ficam no topo da sala, sempre visíveis.
+  // Celulares e alguns navegadores não permitem compartilhar: o botão fica indisponível, com a
+  // explicação ao lado, e a pessoa continua assistindo (FR-010).
+  const podeCompartilhar = typeof navigator.mediaDevices?.getDisplayMedia === "function";
+  const avisoSemSuporte = criarElemento("p", {
+    className: "sem-suporte",
+    textContent: TEXTOS.semSuporteCompartilhar,
+    hidden: podeCompartilhar,
+  });
+  const tela = criarBotaoDispositivo(TELA, {
+    classe: "compartilhar",
+    ligar: () => midia.compartilharTela(),
+    desligar: () => midia.pararCompartilhamento(),
+    aoMudar: (ligado, resultado) => {
+      compartilhando = ligado;
+      sala.enviar(
+        ligado
+          ? { tipo: "tela", compartilhando: true, som: resultado.som }
+          : { tipo: "tela", compartilhando: false },
+      );
+      atualizarTela();
+    },
+  });
+
+  // O link, os botões de mídia e o "Ativar som" ficam no topo da sala, sempre visíveis.
   const linhaLink = criarElemento("div", { className: "linha-link" }, [
     campoLink,
     botaoCopiar,
     microfone.botao,
     camera.botao,
+    tela.botao,
     botaoSom,
   ]);
-  mostrarNaSala(titulo, linhaLink, areaVideos, avisoAnfitriao, tituloLista, lista);
+  if (!podeCompartilhar) tela.desabilitar();
+
+  // A tela compartilhada fica acima das câmeras (FR-006).
+  mostrarNaSala(
+    titulo,
+    linhaLink,
+    avisoSemSuporte,
+    areaTela.elemento,
+    areaVideos,
+    avisoAnfitriao,
+    tituloLista,
+    lista,
+  );
 
   const sala = conectar(idSala, nome, {
     aoReceberLista(participantes, idVoce) {
@@ -371,9 +458,10 @@ function mostrarTelaSala(idSala, nome) {
         ),
       );
       avisoAnfitriao.hidden = !souAnfitriao(participantes, idVoce);
-      midia.atualizarParticipantes(participantes, idVoce);
+      // Antes da mídia: ela pode pedir para redesenhar a tela (aoChegarVideo) com a lista nova.
       ultimaLista = participantes;
       idProprio = idVoce;
+      midia.atualizarParticipantes(participantes, idVoce);
       atualizarAvisoSemVoz();
       atualizarVideos();
     },
@@ -385,14 +473,16 @@ function mostrarTelaSala(idSala, nome) {
   };
 }
 
-// Botão que liga e desliga um dispositivo (microfone ou câmera). Começa sempre desligado, e a
-// permissão só é pedida no primeiro clique. `aoMudar(ligado)` só é chamado quando o dispositivo de
-// fato liga ou desliga. Falhas só geram mensagem para a própria pessoa; a sala continua
-// funcionando. Ver FR-001 a FR-012 da T03 e da T04.
+// Botão que liga e desliga um dispositivo (microfone, câmera ou compartilhamento de tela). Começa
+// sempre desligado, e a permissão só é pedida no primeiro clique. `aoMudar(ligado, resultado)` só é
+// chamado quando o dispositivo de fato liga ou desliga (`resultado` é o que `ligar` devolveu).
+// Falhas só geram mensagem para a própria pessoa; a sala continua funcionando. Ver FR-001 a FR-012
+// da T03 e da T04 e FR-010 a FR-012 da T05.
 function criarBotaoDispositivo(textos, { classe, ligar, desligar, aoMudar }) {
   const botao = criarElemento("button", { className: classe });
   let ligado = false;
   let mensagemDeErro = null;
+  let indisponivel = false;
 
   function mostrarErro(texto) {
     mensagemDeErro = texto;
@@ -400,7 +490,7 @@ function criarBotaoDispositivo(textos, { classe, ligar, desligar, aoMudar }) {
   }
 
   function mostrarEstado() {
-    botao.disabled = false;
+    botao.disabled = indisponivel;
     botao.textContent = ligado ? textos.desligar : textos.ligar;
     botao.setAttribute("aria-pressed", String(ligado));
   }
@@ -418,12 +508,14 @@ function criarBotaoDispositivo(textos, { classe, ligar, desligar, aoMudar }) {
     botao.disabled = true;
     botao.textContent = textos.ligando;
     try {
-      await ligar();
+      const resultado = await ligar();
       ligado = true;
-      aoMudar(true);
+      aoMudar(true, resultado);
       limparMensagemSeFor(mensagemDeErro);
     } catch (erro) {
-      mostrarErro(textos.erros[classificarErroCaptura(erro?.name)]);
+      const classificar = textos.classificarErro ?? ((e) => classificarErroCaptura(e?.name));
+      const mensagem = textos.erros[classificar(erro)];
+      if (mensagem) mostrarErro(mensagem);
     }
     mostrarEstado();
   });
@@ -431,13 +523,18 @@ function criarBotaoDispositivo(textos, { classe, ligar, desligar, aoMudar }) {
   mostrarEstado();
   return {
     botao,
+    // Dispositivo indisponível neste navegador: o botão fica desabilitado para sempre.
+    desabilitar() {
+      indisponivel = true;
+      mostrarEstado();
+    },
     // O dispositivo parou sozinho (desconectado ou permissão retirada durante o uso).
     marcarDesconectado() {
       if (!ligado) return;
       ligado = false;
       aoMudar(false);
       mostrarEstado();
-      mostrarErro(textos.desconectado);
+      if (textos.desconectado) mostrarErro(textos.desconectado);
     },
   };
 }
@@ -452,27 +549,6 @@ function criarIndicador(icone, ligado, { classe, rotulo }) {
   indicador.setAttribute("role", "img");
   indicador.setAttribute("aria-label", rotulo);
   return indicador;
-}
-
-// Monta os quadros de vídeo. Os elementos <video> vêm do módulo de mídia e são reaproveitados
-// entre as atualizações da lista, para o vídeo não piscar nem reiniciar.
-function mostrarQuadros(area, quadros, midia) {
-  area.replaceChildren(
-    ...quadros.map(({ id, nome, rotulo, ehVoce, falhou }) => {
-      const video = ehVoce ? midia.previa() : midia.videoDe(id);
-      const conteudo =
-        falhou || !video
-          ? criarElemento("p", {
-              className: "falha-video",
-              textContent: falhou ? TEXTOS.naoFoiPossivelMostrarVideo(nome) : "",
-            })
-          : video;
-      if (video) video.classList.toggle("espelhado", ehVoce);
-      const legenda = criarElemento("figcaption", { textContent: rotulo, title: rotulo });
-      return criarElemento("figure", { className: "quadro" }, [conteudo, legenda]);
-    }),
-  );
-  area.hidden = quadros.length === 0;
 }
 
 // ---------- Telas de erro ----------

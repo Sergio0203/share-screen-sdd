@@ -1,5 +1,6 @@
 // Todos os textos visíveis da interface, em pt-BR (ver specs/002-entrar-sala-link/contracts/ui.md e
-// specs/003-conversar-por-voz/contracts/ui.md e specs/004-ativar-webcam/contracts/ui.md).
+// specs/003-conversar-por-voz/contracts/ui.md e specs/004-ativar-webcam/contracts/ui.md e
+// specs/005-compartilhar-tela/contracts/ui.md).
 export const TEXTOS = {
   // Página inicial e tela de nome
   seuNome: "Seu nome",
@@ -53,6 +54,22 @@ export const TEXTOS = {
     "Sua câmera foi desconectada. Verifique a câmera e clique em 'Ligar câmera' de novo.",
   naoFoiPossivelMostrarVideo: (nome) =>
     `Não foi possível mostrar o vídeo de ${nome}. Verifique sua conexão.`,
+
+  // Compartilhamento de tela
+  compartilharTela: "Compartilhar tela",
+  escolhendoCompartilhamento: "Escolhendo o que compartilhar…",
+  pararCompartilhamento: "Parar de compartilhar",
+  vocEstaCompartilhando: "Você está compartilhando sua tela",
+  semSuporteCompartilhar:
+    "Seu navegador não permite compartilhar a tela. Para compartilhar, use um computador com Chrome, Edge ou Firefox. Você continua podendo assistir.",
+  telaCheia: "Tela cheia",
+  marcaSemSom: " · sem som",
+  verTelaDe: (nome) => `Ver a tela de ${nome}`,
+  naoFoiPossivelMostrarTela: (nome) =>
+    `Não foi possível mostrar a tela de ${nome}. Verifique sua conexão.`,
+  erroPermissaoTela:
+    "Não conseguimos compartilhar sua tela. Verifique se o navegador tem permissão para gravar a tela nas configurações do computador e tente de novo.",
+  erroCompartilhar: "Não foi possível compartilhar sua tela. Tente de novo.",
 
   // Telas de erro
   salaInexistente: "Esta sala não existe ou já foi encerrada.",

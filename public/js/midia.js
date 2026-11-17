@@ -1,8 +1,9 @@
 import { compararPares } from "./midia-regras.js";
 
-// Voz e vídeo: captura do microfone e da câmera e uma conexão direta com cada outra pessoa da sala
-// (malha), com um canal de áudio e um de vídeo. Decisões em specs/003-conversar-por-voz/research.md
-// §1–4, §6, §8, §9 e specs/004-ativar-webcam/research.md §1, §4, §5.
+// Voz, vídeo e tela: captura do microfone, da câmera e da tela e uma conexão direta com cada outra
+// pessoa da sala (malha), com quatro canais fixos (CANAIS). Decisões em
+// specs/003-conversar-por-voz/research.md §1–4, §6, §8, §9, specs/004-ativar-webcam/research.md
+// §1, §4, §5 e specs/005-compartilhar-tela/research.md §1, §2, §5.
 
 // O STUN só informa a cada navegador o próprio endereço público; o áudio não passa por ele.
 const SERVIDORES_ICE = [{ urls: "stun:stun.l.google.com:19302" }];
@@ -10,6 +11,15 @@ const SERVIDORES_ICE = [{ urls: "stun:stun.l.google.com:19302" }];
 // Qualidade moderada: dá para ver o rosto, e 5 envios cabem numa internet doméstica (research §4).
 const OPCOES_CAMERA = {
   video: { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 15, max: 24 } },
+};
+
+// Fluidez para jogos (30 quadros/s); o som vai junto quando o navegador permitir, sem o som da
+// própria aba (as vozes dos amigos), e a própria aba não aparece na escolha (research §5).
+const OPCOES_TELA = {
+  video: { frameRate: { ideal: 30, max: 30 } },
+  audio: { restrictOwnAudio: true },
+  selfBrowserSurface: "exclude",
+  systemAudio: "include",
 };
 
 const OPCOES_MICROFONE = {
@@ -23,13 +33,19 @@ export function criarMidia({
   aoMicrofoneEncerrado = () => {},
   aoCameraEncerrada = () => {},
   aoChegarVideo = () => {},
+  aoTelaEncerrada = () => {},
 }) {
-  // idPublico → { conexaoRtc, audio, video, fila, falhou }
+  // idPublico → { conexaoRtc, audio, video, tela: { video, audio }, fila, falhou }
   const pares = new Map();
   let trilhaMicrofone = null;
   let trilhaCamera = null;
   // Própria imagem, mostrada só para a própria pessoa (FR-005).
   let previaLocal = null;
+  let trilhaTela = null;
+  let trilhaSomTela = null;
+  // Última lista e próprio id: decidem para quem a tela é enviada.
+  let ultimaLista = [];
+  let meuId = null;
   let encerrada = false;
 
   // ---------- Microfone ----------
@@ -47,10 +63,10 @@ export function criarMidia({
     trilha.addEventListener("ended", () => {
       if (trilhaMicrofone !== trilha) return;
       trilhaMicrofone = null;
-      trocarTrilhaEmTodos("audio", null);
+      trocarTrilhaEmTodos("microfone", null);
       aoMicrofoneEncerrado();
     });
-    trocarTrilhaEmTodos("audio", trilha);
+    trocarTrilhaEmTodos("microfone", trilha);
   }
 
   function desligarMicrofone() {
@@ -58,7 +74,7 @@ export function criarMidia({
     // Parar a trilha corta o som na hora (FR-005) e libera o microfone no navegador (FR-015).
     trilhaMicrofone.stop();
     trilhaMicrofone = null;
-    trocarTrilhaEmTodos("audio", null);
+    trocarTrilhaEmTodos("microfone", null);
   }
 
   // ---------- Câmera ----------
@@ -79,10 +95,10 @@ export function criarMidia({
       if (trilhaCamera !== trilha) return;
       trilhaCamera = null;
       descartarPrevia();
-      trocarTrilhaEmTodos("video", null);
+      trocarTrilhaEmTodos("camera", null);
       aoCameraEncerrada();
     });
-    trocarTrilhaEmTodos("video", trilha);
+    trocarTrilhaEmTodos("camera", trilha);
   }
 
   function desligarCamera() {
@@ -91,7 +107,7 @@ export function criarMidia({
     trilhaCamera.stop();
     trilhaCamera = null;
     descartarPrevia();
-    trocarTrilhaEmTodos("video", null);
+    trocarTrilhaEmTodos("camera", null);
   }
 
   function descartarPrevia() {
@@ -103,31 +119,98 @@ export function criarMidia({
     return previaLocal;
   }
 
-  // ---------- Troca de trilhas ----------
+  // ---------- Compartilhamento de tela ----------
 
-  // Ligar e desligar só troca a trilha enviada: cada conexão já tem um canal de áudio e um de
-  // vídeo nos dois sentidos, então não é preciso renegociar com ninguém.
-  function trocarTrilhaEmTodos(tipo, trilha) {
-    for (const par of pares.values()) trocarTrilha(par, tipo, trilha);
+  async function compartilharTela() {
+    if (trilhaTela) return { som: trilhaSomTela !== null };
+    const fluxo = await navigator.mediaDevices.getDisplayMedia(OPCOES_TELA);
+    const [video] = fluxo.getVideoTracks();
+    const [som = null] = fluxo.getAudioTracks();
+    if (encerrada) {
+      for (const trilha of fluxo.getTracks()) trilha.stop();
+      return { som: false };
+    }
+    // Prioriza a fluidez: com pouca banda, o navegador reduz a resolução antes dos quadros/s.
+    video.contentHint = "motion";
+    trilhaTela = video;
+    trilhaSomTela = som;
+    // Parou pelo botão do navegador ou o app compartilhado foi fechado (FR-005).
+    video.addEventListener("ended", () => {
+      if (trilhaTela !== video) return;
+      pararCompartilhamento();
+      aoTelaEncerrada();
+    });
+    aplicarEnvioTela();
+    return { som: som !== null };
   }
 
-  function trocarTrilha(par, tipo, trilha) {
-    transceptorDe(par.conexaoRtc, tipo)
+  function pararCompartilhamento() {
+    if (!trilhaTela) return;
+    trilhaTela.stop();
+    trilhaSomTela?.stop();
+    trilhaTela = null;
+    trilhaSomTela = null;
+    aplicarEnvioTela();
+  }
+
+  // A tela só vai para quem a tem em destaque (`assistindo` igual ao meu id): cada pessoa recebe
+  // no máximo uma tela, por mais que existam (research §2).
+  function enviaTelaPara(idPar) {
+    if (!trilhaTela) return false;
+    return ultimaLista.find(({ id }) => id === idPar)?.assistindo === meuId;
+  }
+
+  function aplicarEnvioTela() {
+    for (const par of pares.values()) {
+      for (const canal of ["telaVideo", "telaAudio"]) {
+        const desejada = trilhaAtual(canal, par.id);
+        if (par.enviandoTela[canal] === desejada) continue;
+        par.enviandoTela[canal] = desejada;
+        trocarTrilha(par, canal, desejada);
+      }
+    }
+  }
+
+  // ---------- Troca de trilhas ----------
+
+  // Ligar e desligar só troca a trilha enviada: cada conexão já tem os quatro canais nos dois
+  // sentidos, então não é preciso renegociar com ninguém.
+  function trocarTrilhaEmTodos(canal, trilha) {
+    for (const par of pares.values()) trocarTrilha(par, canal, trilha);
+  }
+
+  function trocarTrilha(par, canal, trilha) {
+    transceptorDe(par.conexaoRtc, canal)
       ?.sender.replaceTrack(trilha)
       .catch(() => marcarFalha(par));
   }
 
-  function trilhaAtual(tipo) {
-    return tipo === "audio" ? trilhaMicrofone : trilhaCamera;
+  // O que cada canal deve enviar para um par neste momento.
+  function trilhaAtual(canal, idPar) {
+    if (canal === "microfone") return trilhaMicrofone;
+    if (canal === "camera") return trilhaCamera;
+    if (!enviaTelaPara(idPar)) return null;
+    return canal === "telaVideo" ? trilhaTela : trilhaSomTela;
+  }
+
+  // Trilha inicial de um canal de um par novo; nos canais da tela, guarda o que foi enviado para
+  // que aplicarEnvioTela só troque quando mudar.
+  function trilhaInicial(par, canal) {
+    const trilha = trilhaAtual(canal, par.id);
+    if (canal in par.enviandoTela) par.enviandoTela[canal] = trilha;
+    return trilha;
   }
 
   // ---------- Conexões com as outras pessoas ----------
 
   function atualizarParticipantes(lista, idVoce) {
     if (encerrada || !idVoce) return;
+    ultimaLista = lista;
+    meuId = idVoce;
     const { criar, fechar } = compararPares(pares.keys(), lista, idVoce);
     for (const id of fechar) fecharPar(id);
     for (const id of criar) iniciarPar(id);
+    aplicarEnvioTela();
   }
 
   function criarPar(id) {
@@ -137,6 +220,8 @@ export function criarMidia({
       conexaoRtc,
       audio: null,
       video: null,
+      tela: { video: null, audio: null },
+      enviandoTela: { telaVideo: null, telaAudio: null },
       fila: Promise.resolve(),
       falhou: false,
     };
@@ -145,24 +230,21 @@ export function criarMidia({
     conexaoRtc.addEventListener("icecandidate", ({ candidate }) => {
       if (candidate) enviarSinal(id, { candidato: candidate.toJSON() });
     });
-    conexaoRtc.addEventListener("track", ({ track }) => {
-      // Áudio e vídeo em elementos separados: o vídeo sem som nunca é bloqueado pelo navegador.
-      if (track.kind === "audio") tocar(par, new MediaStream([track]));
-      else if (track.kind === "video") mostrarVideo(par, new MediaStream([track]));
-    });
     conexaoRtc.addEventListener("connectionstatechange", () => {
       if (conexaoRtc.connectionState === "failed") marcarFalha(par);
     });
     return par;
   }
 
-  // Só um lado de cada par inicia (devoIniciar): cria os canais de áudio e vídeo e envia a oferta.
+  // Só um lado de cada par inicia (devoIniciar): cria os quatro canais, na ordem de CANAIS, e
+  // envia a oferta. O outro lado recebe os canais na mesma ordem.
   function iniciarPar(id) {
     const par = criarPar(id);
-    for (const tipo of TIPOS) {
+    for (const { nome, tipo } of CANAIS) {
       par.conexaoRtc.addTransceiver(tipo, { direction: "sendrecv" });
-      trocarTrilha(par, tipo, trilhaAtual(tipo));
+      trocarTrilha(par, nome, trilhaInicial(par, nome));
     }
+    prepararRecepcao(par);
     enfileirar(par, async () => {
       await par.conexaoRtc.setLocalDescription();
       enviarSinal(id, { descricao: par.conexaoRtc.localDescription.toJSON() });
@@ -184,13 +266,15 @@ export function criarMidia({
     const { conexaoRtc } = par;
     if (descricao) {
       await conexaoRtc.setRemoteDescription(descricao);
+      // Do lado que responde, os canais só passam a existir com a oferta.
+      prepararRecepcao(par);
       if (descricao.type === "offer") {
         // O lado que responde também envia pelos mesmos canais criados pela oferta.
-        for (const tipo of TIPOS) {
-          const transceptor = transceptorDe(conexaoRtc, tipo);
+        for (const { nome } of CANAIS) {
+          const transceptor = transceptorDe(conexaoRtc, nome);
           if (!transceptor) continue;
           transceptor.direction = "sendrecv";
-          await transceptor.sender.replaceTrack(trilhaAtual(tipo));
+          await transceptor.sender.replaceTrack(trilhaInicial(par, nome));
         }
         await conexaoRtc.setLocalDescription();
         enviarSinal(par.id, { descricao: conexaoRtc.localDescription.toJSON() });
@@ -217,46 +301,74 @@ export function criarMidia({
     if (!par) return;
     pares.delete(id);
     par.conexaoRtc.close();
-    if (par.audio) {
-      par.audio.srcObject = null;
-      par.audio.remove();
+    for (const audio of [par.audio, par.tela.audio]) {
+      if (!audio) continue;
+      audio.srcObject = null;
+      audio.remove();
     }
-    if (par.video) par.video.srcObject = null;
+    for (const video of [par.video, par.tela.video]) if (video) video.srcObject = null;
+  }
+
+  // ---------- Recepção ----------
+
+  // Liga cada canal recebido a um elemento de som ou imagem assim que o canal existe, usando a
+  // trilha de recepção do próprio canal (que existe desde a criação, mesmo sem mídia chegando).
+  // Não depende do evento `track`: ele só dispara na negociação, e alguns navegadores não o
+  // disparam para um canal que ainda não tinha trilha; e começar a compartilhar ou ligar a câmera
+  // depois (só troca de trilha do outro lado) não dispara nada aqui. Sem isso, a tela
+  // compartilhada ficava sem <video> para sempre.
+  function prepararRecepcao(par) {
+    const { conexaoRtc } = par;
+    const trilhaDe = (canal) => transceptorDe(conexaoRtc, canal)?.receiver.track ?? null;
+    let mudou = false;
+    const comFluxo = (canal, montar) => {
+      const trilha = trilhaDe(canal);
+      if (!trilha) return null;
+      mudou = true;
+      return montar(new MediaStream([trilha]));
+    };
+    par.audio ??= comFluxo("microfone", (fluxo) => tocar(null, fluxo));
+    par.video ??= comFluxo("camera", criarVideoCom);
+    par.tela.video ??= comFluxo("telaVideo", criarVideoCom);
+    par.tela.audio ??= comFluxo("telaAudio", (fluxo) => tocar(null, fluxo));
+    // A lista pode ter chegado antes dos canais: a tela precisa montar quadros e destaque de novo.
+    if (mudou) aoChegarVideo(par.id);
   }
 
   // ---------- Som recebido ----------
 
-  function tocar(par, fluxo) {
-    if (!par.audio) {
-      par.audio = document.createElement("audio");
-      par.audio.autoplay = true;
-      par.audio.hidden = true;
-      document.body.append(par.audio);
+  // Devolve o elemento <audio> (o existente ou um novo) já tocando o fluxo.
+  function tocar(audio, fluxo) {
+    if (!audio) {
+      audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.hidden = true;
+      document.body.append(audio);
     }
-    par.audio.srcObject = fluxo;
-    par.audio.play().catch((erro) => {
+    audio.srcObject = fluxo;
+    audio.play().catch((erro) => {
       // Sem um clique na página, o navegador pode recusar tocar som (ex.: depois de recarregar).
       if (erro.name === "NotAllowedError") aoMudarSomBloqueado(true);
     });
+    return audio;
   }
 
   // ---------- Vídeo recebido ----------
 
   // O elemento fica guardado no par; quem monta a tela decide onde (e se) ele aparece.
-  function mostrarVideo(par, fluxo) {
-    if (!par.video) par.video = criarElementoVideo();
-    par.video.srcObject = fluxo;
-    // A lista pode ter chegado antes do vídeo: a tela precisa montar o quadro de novo.
-    aoChegarVideo(par.id);
-  }
-
   function videoDe(id) {
     return pares.get(id)?.video ?? null;
   }
 
+  function telaDe(id) {
+    return { video: pares.get(id)?.tela.video ?? null };
+  }
+
   // Chamada a partir de um clique, que é o que o navegador exige para liberar o som.
   function ativarSom() {
-    for (const par of pares.values()) par.audio?.play().catch(() => {});
+    for (const par of pares.values()) {
+      for (const audio of [par.audio, par.tela.audio]) audio?.play().catch(() => {});
+    }
     aoMudarSomBloqueado(false);
   }
 
@@ -264,6 +376,7 @@ export function criarMidia({
     encerrada = true;
     desligarMicrofone();
     desligarCamera();
+    pararCompartilhamento();
     for (const id of [...pares.keys()]) fecharPar(id);
   }
 
@@ -277,15 +390,31 @@ export function criarMidia({
     desligarCamera,
     previa,
     videoDe,
+    telaDe,
+    compartilharTela,
+    pararCompartilhamento,
     encerrar,
   };
 }
 
-const TIPOS = ["audio", "video"];
+// Canais de cada conexão, sempre nesta ordem. Há dois canais de vídeo (câmera e tela), então o
+// canal é achado pela posição: os dois lados criam os transceptores na ordem da oferta.
+const CANAIS = [
+  { nome: "microfone", tipo: "audio" },
+  { nome: "camera", tipo: "video" },
+  { nome: "telaVideo", tipo: "video" },
+  { nome: "telaAudio", tipo: "audio" },
+];
 
-// O canal é achado pelo tipo, não pela posição, para nunca trocar áudio por vídeo.
-function transceptorDe(conexaoRtc, tipo) {
-  return conexaoRtc.getTransceivers().find((t) => t.receiver.track.kind === tipo) ?? null;
+function transceptorDe(conexaoRtc, canal) {
+  const posicao = CANAIS.findIndex(({ nome }) => nome === canal);
+  return conexaoRtc.getTransceivers()[posicao] ?? null;
+}
+
+function criarVideoCom(fluxo) {
+  const video = criarElementoVideo();
+  video.srcObject = fluxo;
+  return video;
 }
 
 function criarElementoVideo() {

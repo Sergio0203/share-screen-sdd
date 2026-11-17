@@ -91,7 +91,17 @@ test("entrar com nome e a chave do criador devolve entrou e a lista com o anfitr
   const participantes = await ana.proxima();
   assert.deepEqual(participantes, {
     tipo: "participantes",
-    lista: [{ id: entrou.voce, nome: "Ana", anfitriao: true, microfone: false, camera: false }],
+    lista: [
+      {
+        id: entrou.voce,
+        nome: "Ana",
+        anfitriao: true,
+        microfone: false,
+        camera: false,
+        tela: null,
+        assistindo: null,
+      },
+    ],
   });
   ana.fechar();
 });
@@ -106,8 +116,24 @@ test("quando alguém entra, todos recebem a lista nova em ordem de entrada", asy
   assert.notEqual(bruno.entrou.chave, chave);
 
   const esperado = [
-    { id: ana.entrou.voce, nome: "Ana", anfitriao: true, microfone: false, camera: false },
-    { id: bruno.entrou.voce, nome: "Bruno", anfitriao: false, microfone: false, camera: false },
+    {
+      id: ana.entrou.voce,
+      nome: "Ana",
+      anfitriao: true,
+      microfone: false,
+      camera: false,
+      tela: null,
+      assistindo: null,
+    },
+    {
+      id: bruno.entrou.voce,
+      nome: "Bruno",
+      anfitriao: false,
+      microfone: false,
+      camera: false,
+      tela: null,
+      assistindo: null,
+    },
   ];
   assert.deepEqual(await ana.esperarLista((l) => l.length === 2), esperado);
   assert.deepEqual(await bruno.esperarLista((l) => l.length === 2), esperado);
@@ -417,6 +443,78 @@ test("câmera e microfone mudam de forma independente na lista", async () => {
   ana.fechar();
   bruno.fechar();
 });
+
+// ---------- Compartilhamento de tela (T05) ----------
+
+const dePessoa = (lista, nome) => lista.find((p) => p.nome === nome);
+
+test("compartilhar e assistir atualizam a lista de todos", async () => {
+  const { id, ana, bruno } = await salaComAnaEBruno();
+
+  ana.enviar({ tipo: "tela", compartilhando: true, som: false });
+  const listaAna = await bruno.esperarLista((l) => dePessoa(l, "Ana").tela !== null);
+  const telaAna = dePessoa(listaAna, "Ana").tela;
+  assert.equal(telaAna.som, false);
+
+  bruno.enviar({ tipo: "tela", compartilhando: true, som: true });
+  const listaBruno = await ana.esperarLista((l) => dePessoa(l, "Bruno").tela !== null);
+  assert.ok(dePessoa(listaBruno, "Bruno").tela.inicio > telaAna.inicio);
+
+  bruno.enviar({ tipo: "assistindo", id: ana.entrou.voce });
+  await ana.esperarLista((l) => dePessoa(l, "Bruno").assistindo === ana.entrou.voce);
+
+  // Quem entra depois recebe os dois estados.
+  const carla = await entrarNaSala(id, "Carla");
+  const listaCarla = await carla.esperarLista((l) => l.length === 3);
+  assert.deepEqual(dePessoa(listaCarla, "Ana").tela, telaAna);
+  assert.equal(dePessoa(listaCarla, "Bruno").assistindo, ana.entrou.voce);
+
+  ana.enviar({ tipo: "tela", compartilhando: false });
+  await carla.esperarLista((l) => dePessoa(l, "Ana").tela === null);
+  bruno.enviar({ tipo: "assistindo", id: null });
+  await carla.esperarLista((l) => dePessoa(l, "Bruno").assistindo === null);
+  for (const cliente of [ana, bruno, carla]) cliente.fechar();
+});
+
+test("reconectar com a mesma chave para o compartilhamento", async () => {
+  const { id, chave } = await criarSala();
+  const antiga = await entrarNaSala(id, "Ana", chave);
+  antiga.enviar({ tipo: "tela", compartilhando: true, som: true });
+  antiga.enviar({ tipo: "assistindo", id: "x" });
+  await antiga.esperarLista((l) => l[0].tela !== null && l[0].assistindo === "x");
+
+  const nova = await entrarNaSala(id, "Ana", chave);
+  const { lista } = await nova.esperarTipo("participantes");
+  assert.equal(lista[0].tela, null);
+  assert.equal(lista[0].assistindo, null);
+  nova.fechar();
+});
+
+for (const tipo of ["tela", "assistindo"]) {
+  test(`${tipo} antes de entrar devolve mensagem-invalida`, async () => {
+    const cliente = await conectar();
+    cliente.enviar({ tipo, compartilhando: false, id: null });
+    assert.equal((await cliente.proxima()).codigo, "mensagem-invalida");
+    await cliente.fechada;
+  });
+}
+
+for (const [descricao, mensagem] of [
+  ["compartilhando não booleano", { tipo: "tela", compartilhando: "sim" }],
+  ["som ausente ao compartilhar", { tipo: "tela", compartilhando: true }],
+  ["som não booleano", { tipo: "tela", compartilhando: true, som: 1 }],
+  ["assistindo com id número", { tipo: "assistindo", id: 1 }],
+  ["assistindo com id objeto", { tipo: "assistindo", id: {} }],
+  ["assistindo sem id", { tipo: "assistindo" }],
+]) {
+  test(`${descricao} devolve mensagem-invalida`, async () => {
+    const { id } = await criarSala();
+    const cliente = await entrarNaSala(id, "Ana");
+    cliente.enviar(mensagem);
+    assert.equal((await cliente.esperarTipo("erro")).codigo, "mensagem-invalida");
+    await cliente.fechada;
+  });
+}
 
 // ---------- Expiração (T01) ----------
 

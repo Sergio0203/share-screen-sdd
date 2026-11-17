@@ -6,7 +6,13 @@ Na sala, cada pessoa liga e desliga o próprio microfone e a própria câmera: t
 com o microfone ligado, veem o vídeo de quem está com a câmera ligada e veem na lista o estado de
 cada um.
 
-Microfone e câmera só funcionam quando o app é aberto por `https://` ou em `http://localhost`.
+Qualquer pessoa pode compartilhar a tela inteira ou a janela de um app (com o som, quando o
+navegador permitir). Os outros veem o compartilhamento em destaque, acima das câmeras, e podem pôr
+em tela cheia; se várias pessoas compartilham ao mesmo tempo, cada um escolhe qual ver em destaque.
+Compartilhar exige Chrome, Edge ou Firefox de computador; pelo celular, dá para assistir.
+
+Microfone, câmera e compartilhamento só funcionam quando o app é aberto por `https://` ou em
+`http://localhost`.
 
 ## Pré-requisitos
 
