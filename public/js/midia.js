@@ -1,4 +1,5 @@
 import { compararPares } from "./midia-regras.js";
+import { parametrosDeEnvio, qualidadePorId, restricoesDeCaptura } from "./qualidades.js";
 
 // Voz, vídeo e tela: captura do microfone, da câmera e da tela e uma conexão direta com cada outra
 // pessoa da sala (malha), com quatro canais fixos (CANAIS). Decisões em
@@ -13,10 +14,10 @@ const OPCOES_CAMERA = {
   video: { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 15, max: 24 } },
 };
 
-// Fluidez para jogos (30 quadros/s); o som vai junto quando o navegador permitir, sem o som da
-// própria aba (as vozes dos amigos), e a própria aba não aparece na escolha (research §5).
+// O som vai junto quando o navegador permitir, sem o som da própria aba (as vozes dos amigos), e a
+// própria aba não aparece na escolha (T05 research §5). Os limites do vídeo vêm da qualidade
+// escolhida (T06).
 const OPCOES_TELA = {
-  video: { frameRate: { ideal: 30, max: 30 } },
   audio: { restrictOwnAudio: true },
   selfBrowserSurface: "exclude",
   systemAudio: "include",
@@ -43,6 +44,7 @@ export function criarMidia({
   let previaLocal = null;
   let trilhaTela = null;
   let trilhaSomTela = null;
+  let qualidadeTela = null;
   // Última lista e próprio id: decidem para quem a tela é enviada.
   let ultimaLista = [];
   let meuId = null;
@@ -121,9 +123,12 @@ export function criarMidia({
 
   // ---------- Compartilhamento de tela ----------
 
-  async function compartilharTela() {
+  async function compartilharTela(qualidade = qualidadePorId()) {
     if (trilhaTela) return { som: trilhaSomTela !== null };
-    const fluxo = await navigator.mediaDevices.getDisplayMedia(OPCOES_TELA);
+    const fluxo = await navigator.mediaDevices.getDisplayMedia({
+      ...OPCOES_TELA,
+      video: restricoesDeCaptura(qualidade),
+    });
     const [video] = fluxo.getVideoTracks();
     const [som = null] = fluxo.getAudioTracks();
     if (encerrada) {
@@ -134,6 +139,7 @@ export function criarMidia({
     video.contentHint = "motion";
     trilhaTela = video;
     trilhaSomTela = som;
+    qualidadeTela = qualidade;
     // Parou pelo botão do navegador ou o app compartilhado foi fechado (FR-005).
     video.addEventListener("ended", () => {
       if (trilhaTela !== video) return;
@@ -150,7 +156,34 @@ export function criarMidia({
     trilhaSomTela?.stop();
     trilhaTela = null;
     trilhaSomTela = null;
+    qualidadeTela = null;
     aplicarEnvioTela();
+  }
+
+  // Troca a qualidade no meio do compartilhamento: muda a captura em uso (sem abrir de novo a
+  // escolha de tela nem trocar a trilha que os outros recebem) e os limites do envio (FR-006).
+  // Se o navegador recusar, a captura continua como estava e o erro sobe (FR-008).
+  async function mudarQualidade(qualidade) {
+    if (!trilhaTela) return;
+    await trilhaTela.applyConstraints(restricoesDeCaptura(qualidade));
+    qualidadeTela = qualidade;
+    for (const par of pares.values()) aplicarParametrosDeEnvio(par);
+  }
+
+  function qualidadeAtiva() {
+    if (!trilhaTela) return null;
+    const { width, height } = trilhaTela.getSettings();
+    return { qualidade: qualidadeTela, largura: width, altura: height };
+  }
+
+  // Limita quadros por segundo e taxa do envio da tela para um par que a está recebendo (T06
+  // research §1, §3). Antes de a conexão terminar a negociação não há o que limitar: o erro é
+  // ignorado e o envio é reaplicado quando ela conecta.
+  function aplicarParametrosDeEnvio(par) {
+    if (!qualidadeTela || !par.enviandoTela.telaVideo) return;
+    const envio = transceptorDe(par.conexaoRtc, "telaVideo")?.sender;
+    if (!envio) return;
+    envio.setParameters(parametrosDeEnvio(envio.getParameters(), qualidadeTela)).catch(() => {});
   }
 
   // A tela só vai para quem a tem em destaque (`assistindo` igual ao meu id): cada pessoa recebe
@@ -167,6 +200,7 @@ export function criarMidia({
         if (par.enviandoTela[canal] === desejada) continue;
         par.enviandoTela[canal] = desejada;
         trocarTrilha(par, canal, desejada);
+        if (canal === "telaVideo") aplicarParametrosDeEnvio(par);
       }
     }
   }
@@ -232,6 +266,7 @@ export function criarMidia({
     });
     conexaoRtc.addEventListener("connectionstatechange", () => {
       if (conexaoRtc.connectionState === "failed") marcarFalha(par);
+      if (conexaoRtc.connectionState === "connected") aplicarParametrosDeEnvio(par);
     });
     return par;
   }
@@ -393,6 +428,8 @@ export function criarMidia({
     telaDe,
     compartilharTela,
     pararCompartilhamento,
+    mudarQualidade,
+    qualidadeAtiva,
     encerrar,
   };
 }

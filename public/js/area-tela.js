@@ -11,6 +11,7 @@ export function criarAreaTela({ aoEscolher }) {
     className: "aviso-compartilhando",
     textContent: TEXTOS.vocEstaCompartilhando,
   });
+  const textoQualidade = criarElemento("p", { className: "qualidade-ativa" });
   const destaque = criarElemento("div", { className: "destaque" });
   const legenda = criarElemento("p", { className: "legenda-tela" });
   const botaoTelaCheia = criarElemento("button", {
@@ -26,9 +27,10 @@ export function criarAreaTela({ aoEscolher }) {
     botaoTelaCheia.hidden = document.fullscreenElement === destaque;
   });
 
-  // `estado`: resultado de escolherDestaque + se a própria pessoa está compartilhando.
+  // `estado`: resultado de escolherDestaque + se a própria pessoa está compartilhando e, nesse caso,
+  // o texto da qualidade ativa (T06).
   // `telaDe(id)` devolve o <video> recebido; `idsComFalha`: pessoas cuja conexão falhou.
-  function atualizar({ destaque: item, miniaturas: outros, compartilhando }, opcoes) {
+  function atualizar({ destaque: item, miniaturas: outros, compartilhando, qualidade }, opcoes) {
     // O destaque mudou ou acabou: sair da tela cheia em vez de mostrar outra tela nela (FR-008).
     if (item?.id !== idEmDestaque && document.fullscreenElement === destaque) {
       document.exitFullscreen().catch(() => {});
@@ -38,6 +40,10 @@ export function criarAreaTela({ aoEscolher }) {
     const partes = [];
     let videoMostrado = null;
     if (compartilhando) partes.push(aviso);
+    if (compartilhando && qualidade) {
+      textoQualidade.textContent = qualidade;
+      partes.push(textoQualidade);
+    }
     if (item) {
       legenda.textContent = rotulo(item);
       const conteudo = conteudoDoDestaque(item, opcoes);

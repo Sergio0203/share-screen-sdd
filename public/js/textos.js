@@ -1,6 +1,6 @@
 // Todos os textos visíveis da interface, em pt-BR (ver specs/002-entrar-sala-link/contracts/ui.md e
 // specs/003-conversar-por-voz/contracts/ui.md e specs/004-ativar-webcam/contracts/ui.md e
-// specs/005-compartilhar-tela/contracts/ui.md).
+// specs/005-compartilhar-tela/contracts/ui.md e specs/006-qualidade-compartilhamento/contracts/ui.md).
 export const TEXTOS = {
   // Página inicial e tela de nome
   seuNome: "Seu nome",
@@ -70,6 +70,13 @@ export const TEXTOS = {
   erroPermissaoTela:
     "Não conseguimos compartilhar sua tela. Verifique se o navegador tem permissão para gravar a tela nas configurações do computador e tente de novo.",
   erroCompartilhar: "Não foi possível compartilhar sua tela. Tente de novo.",
+
+  // Qualidade do compartilhamento
+  qualidadeDoCompartilhamento: "Qualidade do compartilhamento",
+  qualidadeAtiva: (descricao) => `Qualidade: ${descricao}`,
+  limitadaPelaTela: " (limitada pelo tamanho da tela)",
+  erroQualidade:
+    "Não foi possível usar essa qualidade. O compartilhamento continua na qualidade anterior.",
 
   // Telas de erro
   salaInexistente: "Esta sala não existe ou já foi encerrada.",

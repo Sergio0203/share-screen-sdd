@@ -155,3 +155,40 @@ test("redesenhar sem tirar o quadro da página não chama play à toa", () => {
   mostrar(["bruno"]);
   assert.equal(video.vezesTocado, 0);
 });
+
+// ---------- Qualidade ativa (T06) ----------
+
+function textosNaArea(area) {
+  return area.elemento.filhos.map((filho) => filho.textContent);
+}
+
+test("quem compartilha vê a qualidade ativa junto do aviso", () => {
+  const area = criarAreaTela({ aoEscolher() {} });
+  document.body.append(area.elemento);
+  const opcoes = { telaDe: () => ({ video: null }), idsComFalha: [] };
+
+  area.atualizar(
+    { destaque: null, miniaturas: [], compartilhando: true, qualidade: "Qualidade: 720p · 30 fps" },
+    opcoes,
+  );
+  const textos = textosNaArea(area);
+  assert.ok(textos.includes("Qualidade: 720p · 30 fps"));
+  assert.ok(
+    textos.indexOf("Qualidade: 720p · 30 fps") > textos.findIndex((t) => /compartilhando/.test(t)),
+    "logo depois do aviso",
+  );
+
+  area.atualizar({ destaque: null, miniaturas: [], compartilhando: true }, opcoes);
+  assert.ok(!textosNaArea(area).some((t) => /^Qualidade:/.test(t ?? "")));
+
+  area.atualizar(
+    {
+      destaque: null,
+      miniaturas: [],
+      compartilhando: false,
+      qualidade: "Qualidade: 720p · 30 fps",
+    },
+    opcoes,
+  );
+  assert.equal(area.elemento.filhos.length, 0);
+});

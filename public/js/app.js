@@ -7,10 +7,12 @@ import { mostrarQuadros } from "./area-videos.js";
 import { escolherDestaque } from "./destaque.js";
 import { criarAreaTela } from "./area-tela.js";
 import { criarMidia } from "./midia.js";
+import { QUALIDADES, descreverQualidadeAtiva, qualidadePorId } from "./qualidades.js";
 import { classificarErroCaptura, classificarErroCompartilhamento } from "./midia-regras.js";
 
 const DURACAO_CONFIRMACAO_MS = 2500;
 const CHAVE_NOME = "nomeExibicao";
+const CHAVE_QUALIDADE = "qualidadeCompartilhamento";
 
 const telaInicio = document.getElementById("tela-inicio");
 const telaSala = document.getElementById("tela-sala");
@@ -347,8 +349,10 @@ function mostrarTelaSala(idSala, nome) {
     if (!escolhaAindaCompartilha) escolha = null;
     // Só o compartilhamento em destaque é enviado a esta pessoa, então só o som dele toca (FR-019).
     const estado = escolherDestaque(ultimaLista, idProprio, escolha);
+    const ativa = midia.qualidadeAtiva();
+    const qualidade = ativa && descreverQualidadeAtiva(ativa.qualidade, ativa);
     areaTela.atualizar(
-      { ...estado, compartilhando },
+      { ...estado, compartilhando, qualidade },
       { telaDe: midia.telaDe, idsComFalha: paresSemConexao },
     );
     const assistindo = estado.destaque?.id ?? null;
@@ -401,9 +405,32 @@ function mostrarTelaSala(idSala, nome) {
     textContent: TEXTOS.semSuporteCompartilhar,
     hidden: podeCompartilhar,
   });
+  const seletorQualidade = criarSeletorQualidade({ visivel: podeCompartilhar });
+  seletorQualidade.addEventListener("change", async () => {
+    const escolhida = qualidadePorId(seletorQualidade.value);
+    if (!compartilhando) {
+      salvarArmazenado(CHAVE_QUALIDADE, escolhida.id);
+      return;
+    }
+    // Desabilitado durante a troca: trocas seguidas não se atropelam, vale a última aplicada.
+    seletorQualidade.disabled = true;
+    try {
+      await midia.mudarQualidade(escolhida);
+      salvarArmazenado(CHAVE_QUALIDADE, escolhida.id);
+    } catch {
+      mostrarMensagem(TEXTOS.erroQualidade);
+      seletorQualidade.value = midia.qualidadeAtiva()?.qualidade.id ?? seletorQualidade.value;
+    }
+    seletorQualidade.disabled = false;
+    atualizarTela();
+  });
   const tela = criarBotaoDispositivo(TELA, {
     classe: "compartilhar",
-    ligar: () => midia.compartilharTela(),
+    ligar: async () => {
+      const resultado = await midia.compartilharTela(qualidadePorId(seletorQualidade.value));
+      salvarArmazenado(CHAVE_QUALIDADE, seletorQualidade.value);
+      return resultado;
+    },
     desligar: () => midia.pararCompartilhamento(),
     aoMudar: (ligado, resultado) => {
       compartilhando = ligado;
@@ -423,6 +450,7 @@ function mostrarTelaSala(idSala, nome) {
     microfone.botao,
     camera.botao,
     tela.botao,
+    seletorQualidade,
     botaoSom,
   ]);
   if (!podeCompartilhar) tela.desabilitar();
@@ -471,6 +499,19 @@ function mostrarTelaSala(idSala, nome) {
   return {
     destacarBotaoCopiar: () => botaoCopiar.classList.add("destaque"),
   };
+}
+
+// Escolha da qualidade do compartilhamento (T06). Começa na última qualidade usada neste
+// navegador (ou na padrão); some junto com o botão quando o navegador não permite compartilhar.
+function criarSeletorQualidade({ visivel }) {
+  const seletor = criarElemento(
+    "select",
+    { className: "qualidade", title: TEXTOS.qualidadeDoCompartilhamento, hidden: !visivel },
+    QUALIDADES.map(({ id, nome }) => criarElemento("option", { value: id, textContent: nome })),
+  );
+  seletor.setAttribute("aria-label", TEXTOS.qualidadeDoCompartilhamento);
+  seletor.value = qualidadePorId(lerArmazenado(CHAVE_QUALIDADE)).id;
+  return seletor;
 }
 
 // Botão que liga e desliga um dispositivo (microfone, câmera ou compartilhamento de tela). Começa

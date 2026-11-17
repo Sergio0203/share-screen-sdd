@@ -321,3 +321,25 @@ h2 {
   color: #57606a;
   text-align: center;
 }
+
+/* ---------- Qualidade do compartilhamento (T06) ---------- */
+
+.qualidade {
+  font: inherit;
+  padding: 0.6rem 0.5rem;
+  border: 1px solid #1f6feb;
+  border-radius: 0.5rem;
+  background: #fff;
+  color: #1f6feb;
+}
+
+.qualidade[hidden] {
+  display: none;
+}
+
+.qualidade-ativa {
+  margin: 0;
+  color: #57606a;
+  font-size: 0.9rem;
+  text-align: center;
+}
