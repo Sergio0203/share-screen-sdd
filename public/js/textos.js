@@ -1,9 +1,11 @@
 // Todos os textos visíveis da interface, em pt-BR (ver specs/002-entrar-sala-link/contracts/ui.md e
 // specs/003-conversar-por-voz/contracts/ui.md e specs/004-ativar-webcam/contracts/ui.md e
 // specs/005-compartilhar-tela/contracts/ui.md e specs/006-qualidade-compartilhamento/contracts/ui.md e
-// specs/007-recado-na-tela/contracts/ui.md).
+// specs/007-recado-na-tela/contracts/ui.md e specs/009-melhorias-visuais/contracts/ui.md).
+// O nome do site ("Telão") fica no próprio index.html, no cabeçalho e no título da aba.
 export const TEXTOS = {
   // Página inicial e tela de nome
+  fraseApresentacao: "Compartilhe sua tela com os amigos, com voz e câmera.",
   seuNome: "Seu nome",
   criarSala: "Criar sala",
   criandoSala: "Criando sala…",

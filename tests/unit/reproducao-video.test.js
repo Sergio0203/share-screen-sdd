@@ -15,8 +15,26 @@ class ElementoFalso {
     this.hidden = false;
     this.paused = false;
     this.vezesTocado = 0;
-    this.classList = { toggle() {} };
+    const classes = new Set();
+    this.classList = {
+      add: (...nomes) => nomes.forEach((nome) => classes.add(nome)),
+      remove: (...nomes) => nomes.forEach((nome) => classes.delete(nome)),
+      contains: (nome) => classes.has(nome),
+      toggle: (nome, ligar = !classes.has(nome)) => {
+        if (ligar) classes.add(nome);
+        else classes.delete(nome);
+        return ligar;
+      },
+    };
     this.style = {};
+    this.textoProprio = undefined;
+  }
+  // Como no navegador: sem texto próprio, o texto é o dos filhos (ex.: ícone + <span>).
+  get textContent() {
+    return this.textoProprio ?? this.filhos.map((filho) => filho.textContent ?? "").join("");
+  }
+  set textContent(texto) {
+    this.textoProprio = texto;
   }
   get conectado() {
     return this.pai === null ? this === document.body : this.pai.conectado;
@@ -33,6 +51,8 @@ class ElementoFalso {
   remove() {
     this.pai?.filhos.splice(this.pai.filhos.indexOf(this), 1);
     this.pai = null;
+    // Quem sai da página é pausado, como no navegador.
+    pausarVideos(this);
   }
   setAttribute() {}
   addEventListener() {}
@@ -49,6 +69,12 @@ class ElementoFalso {
       filho.pai = this;
       this.filhos.push(filho);
     }
+  }
+  prepend(...filhos) {
+    const resto = this.filhos;
+    this.filhos = [];
+    this.append(...filhos);
+    this.filhos.push(...resto);
   }
   replaceChildren(...filhos) {
     const antigos = this.filhos;
@@ -74,6 +100,7 @@ beforeEach(() => {
   documentoOriginal = Object.getOwnPropertyDescriptor(globalThis, "document");
   globalThis.document = {
     createElement: (tag) => new ElementoFalso(tag),
+    createElementNS: (_ns, tag) => new ElementoFalso(tag),
     addEventListener() {},
     fullscreenEnabled: false,
     fullscreenElement: null,
@@ -151,19 +178,50 @@ function novaAreaVideos(videos) {
   const area = new ElementoFalso("section");
   document.body.append(area);
   const midia = { previa: () => null, videoDe: (id) => videos[id] ?? null };
-  const quadro = (id) => ({ id, nome: id, rotulo: id, ehVoce: false, falhou: false });
-  return { mostrar: (ids) => mostrarQuadros(area, ids.map(quadro), midia) };
+  // `ids`: quem está na sala; `comCamera`: quem está com a câmera ligada (padrão: todos).
+  const quadro = (comCamera) => (id) => ({
+    id,
+    nome: id,
+    rotulo: id,
+    ehVoce: false,
+    cameraLigada: comCamera.includes(id),
+    falhou: false,
+    inicial: id[0].toUpperCase(),
+  });
+  return {
+    area,
+    mostrar: (ids, comCamera = ids) => mostrarQuadros(area, ids.map(quadro(comCamera)), midia),
+  };
+}
+
+// Vídeos dentro de um elemento, em qualquer profundidade.
+function videosEm(elemento) {
+  if (elemento.tagName === "VIDEO") return [elemento];
+  return elemento.filhos.flatMap(videosEm);
 }
 
 test("desligar e ligar a câmera de novo: o vídeo da câmera volta a tocar", () => {
   const video = videoRecebido();
+  const { mostrar, area } = novaAreaVideos({ bruno: video });
+
+  mostrar(["bruno"]);
+  // T09 FR-017: Bruno desligou a câmera; o quadro continua, com o avatar, e o vídeo sai dele.
+  mostrar(["bruno"], []);
+  assert.equal(video.paused, true);
+  assert.equal(area.filhos.length, 1, "o quadro continua na grade");
+  assert.deepEqual(videosEm(area), [], "nenhuma imagem antiga fica no quadro");
+
+  mostrar(["bruno"]); // Bruno ligou de novo: o mesmo <video> volta.
+  assert.equal(video.paused, false, "não pode ficar congelado na última imagem");
+});
+
+test("quem sai da sala volta com o vídeo tocando", () => {
+  const video = videoRecebido();
   const { mostrar } = novaAreaVideos({ bruno: video });
 
   mostrar(["bruno"]);
-  mostrar([]); // Bruno desligou a câmera: o quadro sai da página.
-  assert.equal(video.paused, true);
-
-  mostrar(["bruno"]); // Bruno ligou de novo: o mesmo <video> volta.
+  mostrar([]); // Bruno saiu: o quadro sai da página (com animação) e o vídeo é pausado.
+  mostrar(["bruno"]);
   assert.equal(video.paused, false, "não pode ficar congelado na última imagem");
 });
 
@@ -174,6 +232,15 @@ test("redesenhar sem tirar o quadro da página não chama play à toa", () => {
   mostrar(["bruno"]);
   mostrar(["bruno"]);
   assert.equal(video.vezesTocado, 0);
+});
+
+test("atualizar a lista não recria os quadros de quem continua na sala", () => {
+  const { mostrar, area } = novaAreaVideos({});
+
+  mostrar(["ana", "bruno"], []);
+  const [quadroAna, quadroBruno] = area.filhos;
+  mostrar(["ana", "bruno"], []);
+  assert.deepEqual(area.filhos, [quadroAna, quadroBruno]);
 });
 
 // ---------- Qualidade ativa (T06) ----------

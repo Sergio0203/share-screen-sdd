@@ -27,6 +27,12 @@ test("GET / devolve a página da aplicação", async () => {
   assert.match(await resposta.text(), /<html lang="pt-BR">/);
 });
 
+test("a página traz o título e o cabeçalho com o nome Telão (T09 FR-018)", async () => {
+  const html = await (await fetch(`${servidor.url}/`)).text();
+  assert.match(html, /<title>Telão<\/title>/);
+  assert.match(html, /<header class="cabecalho"[^>]*>[\s\S]*Telão[\s\S]*<\/header>/);
+});
+
 test("GET /sala/<id> devolve a mesma página da aplicação", async () => {
   const resposta = await fetch(`${servidor.url}/sala/abc`);
   assert.equal(resposta.status, 200);

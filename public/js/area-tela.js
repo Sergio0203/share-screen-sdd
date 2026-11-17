@@ -1,4 +1,5 @@
 import { TEXTOS } from "./textos.js";
+import { criarIcone } from "./icones.js";
 import { retomarVideos } from "./video.js";
 import { acaoDaTecla, ehCampoDeTexto } from "./atalho-recado.js";
 import { INTERVALO_POSICAO_MS, devoEnviarPosicao } from "./movimento-recado.js";
@@ -33,17 +34,18 @@ const INSERCOES_COLADAS = new Set(["insertFromPaste", "insertFromDrop"]);
 // posição do cursor de quem escreve.
 export function criarAreaTela({ aoEscolher, aoEscreverRecado, aoApagarRecado, aoMoverRecado }) {
   const elemento = criarElemento("section", { id: "area-tela", hidden: true });
-  const aviso = criarElemento("p", {
-    className: "aviso-compartilhando",
-    textContent: TEXTOS.vocEstaCompartilhando,
-  });
+  const aviso = criarElemento("p", { className: "aviso-compartilhando" }, [
+    criarIcone("monitor"),
+    criarElemento("span", { textContent: TEXTOS.vocEstaCompartilhando }),
+  ]);
   const textoQualidade = criarElemento("p", { className: "qualidade-ativa" });
   const destaque = criarElemento("div", { className: "destaque" });
   const legenda = criarElemento("p", { className: "legenda-tela" });
-  const botaoTelaCheia = criarElemento("button", {
-    className: "botao-tela-cheia",
-    textContent: TEXTOS.telaCheia,
-  });
+  // T09: só ícone; o nome fica no `aria-label`, que também é a dica.
+  const botaoTelaCheia = criarElemento("button", { className: "controle botao-tela-cheia" }, [
+    criarIcone("tela-cheia"),
+  ]);
+  botaoTelaCheia.setAttribute("aria-label", TEXTOS.telaCheia);
   const miniaturas = criarElemento("div", { className: "miniaturas" });
   // Camada sobre a área real da imagem: os recados ficam num grupo próprio para que redesenhá-los
   // não tire o campo (com o foco) do lugar.
@@ -481,11 +483,11 @@ function conteudoDoDestaque({ id, nome }, { telaDe, idsComFalha }) {
 
 // Miniatura só com ícone e nome: a imagem só chega para o compartilhamento em destaque (FR-017).
 function criarMiniatura(item, aoEscolher) {
-  const botao = criarElemento("button", {
-    className: "miniatura",
-    textContent: `🖥️ ${rotulo(item)}`,
-    title: TEXTOS.verTelaDe(item.nome),
-  });
+  const botao = criarElemento(
+    "button",
+    { className: "miniatura", title: TEXTOS.verTelaDe(item.nome) },
+    [criarIcone("monitor"), criarElemento("span", { textContent: rotulo(item) })],
+  );
   botao.setAttribute("aria-label", TEXTOS.verTelaDe(item.nome));
   botao.addEventListener("click", () => aoEscolher(item.id));
   return botao;

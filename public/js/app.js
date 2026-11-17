@@ -9,6 +9,13 @@ import { criarAreaTela } from "./area-tela.js";
 import { criarMidia } from "./midia.js";
 import { QUALIDADES, descreverQualidadeAtiva, qualidadePorId } from "./qualidades.js";
 import { classificarErroCaptura, classificarErroCompartilhamento } from "./midia-regras.js";
+import { criarIcone } from "./icones.js";
+import {
+  animarEntrada,
+  ordenarFilhos,
+  reiniciarAnimacao,
+  removerComAnimacao,
+} from "./entrada-saida.js";
 
 const DURACAO_CONFIRMACAO_MS = 2500;
 const CHAVE_NOME = "nomeExibicao";
@@ -19,35 +26,42 @@ const telaSala = document.getElementById("tela-sala");
 const areaMensagem = document.getElementById("mensagem");
 
 let temporizadorMensagem = null;
+let textoMensagemAtual = "";
 let conexaoAtual = null;
 let midiaAtual = null;
 
 // ---------- Mensagens ----------
 
+// Aviso flutuante no topo (T09 research §9): as mensagens temporárias são confirmações (sucesso);
+// as demais são erros e avisos. O tipo aparece no ícone e na borda, não só na cor.
 function mostrarMensagem(texto, { temporaria = false } = {}) {
   // Cancelar o temporizador anterior evita que uma confirmação repetida suma antes da hora.
   clearTimeout(temporizadorMensagem);
-  areaMensagem.textContent = texto;
-  if (temporaria) {
-    temporizadorMensagem = setTimeout(
-      () => (areaMensagem.textContent = ""),
-      DURACAO_CONFIRMACAO_MS,
-    );
-  }
+  textoMensagemAtual = texto;
+  areaMensagem.dataset.tipo = temporaria ? "sucesso" : "erro";
+  areaMensagem.replaceChildren(
+    criarIcone(temporaria ? "sucesso" : "alerta"),
+    criarElemento("span", { textContent: texto }),
+  );
+  areaMensagem.classList.add("visivel");
+  if (temporaria) temporizadorMensagem = setTimeout(limparMensagem, DURACAO_CONFIRMACAO_MS);
 }
 
+// O conteúdo fica até o fim do fade de saída; escondido, ele sai da leitura do leitor de tela.
 function limparMensagem() {
   clearTimeout(temporizadorMensagem);
-  areaMensagem.textContent = "";
+  textoMensagemAtual = "";
+  areaMensagem.classList.remove("visivel");
 }
 
 // Apaga a mensagem só se ela ainda for a mesma (outra mais recente não deve sumir).
 function limparMensagemSeFor(texto) {
-  if (texto && areaMensagem.textContent === texto) limparMensagem();
+  if (texto && textoMensagemAtual === texto) limparMensagem();
 }
 
 // Mensagens por tipo de erro (classificarErroCaptura) e textos do botão de cada dispositivo.
 const MICROFONE = {
+  icones: { desligado: "microfone-desligado", ligado: "microfone" },
   ligar: TEXTOS.ligarMicrofone,
   desligar: TEXTOS.desligarMicrofone,
   ligando: TEXTOS.ligandoMicrofone,
@@ -62,6 +76,7 @@ const MICROFONE = {
 // Compartilhar a tela usa o mesmo botão: "ligar" é escolher o que compartilhar. Parar pelo
 // navegador é normal, por isso não há mensagem de "desconectado".
 const TELA = {
+  icones: { desligado: "monitor", ligado: "monitor-parar" },
   ligar: TEXTOS.compartilharTela,
   desligar: TEXTOS.pararCompartilhamento,
   ligando: TEXTOS.escolhendoCompartilhamento,
@@ -76,6 +91,7 @@ const TELA = {
 };
 
 const CAMERA = {
+  icones: { desligado: "camera-desligada", ligado: "camera" },
   ligar: TEXTOS.ligarCamera,
   desligar: TEXTOS.desligarCamera,
   ligando: TEXTOS.ligandoCamera,
@@ -98,6 +114,31 @@ function criarElemento(tag, propriedades = {}, filhos = []) {
 
 // localStorage pode estar indisponível (ex.: bloqueado pelo navegador): nesse caso o app funciona,
 // só não lembra o nome nem a chave ao recarregar.
+// Botão com texto e ícone (T09 contracts/ui.md "Outros botões"). O texto fica num <span> próprio
+// para poder ser trocado sem perder o ícone.
+function criarBotaoComTexto(texto, icone, { classe = "", iconeDepois = false } = {}) {
+  const rotulo = criarElemento("span", { className: "texto-botao", textContent: texto });
+  const filhos = iconeDepois ? [rotulo, criarIcone(icone)] : [criarIcone(icone), rotulo];
+  return criarElemento("button", { className: classe }, filhos);
+}
+
+function trocarTextoBotao(botao, texto) {
+  botao.querySelector(".texto-botao").textContent = texto;
+}
+
+// Ação em andamento: ícone girando antes do texto (FR-009).
+function marcarCarregando(botao, carregando) {
+  botao.classList.toggle("carregando", carregando);
+  botao.querySelector(".icone-carregando")?.remove();
+  if (carregando) botao.prepend(criarIconeCarregando());
+}
+
+function criarIconeCarregando() {
+  const icone = criarIcone("carregando");
+  icone.classList.add("icone-carregando");
+  return icone;
+}
+
 function lerArmazenado(chave) {
   try {
     return localStorage.getItem(chave) ?? undefined;
@@ -132,8 +173,10 @@ function irPara(caminho) {
 function mostrarNaSala(...elementos) {
   telaInicio.hidden = true;
   telaInicio.replaceChildren();
+  telaSala.classList.remove("sala");
   telaSala.replaceChildren(...elementos);
   telaSala.hidden = false;
+  reiniciarAnimacao(telaSala);
 }
 
 // ---------- Campo de nome (página inicial e tela de nome) ----------
@@ -209,13 +252,21 @@ function mostrarTelaInicio() {
   telaSala.hidden = true;
   telaSala.replaceChildren();
 
-  const botao = criarElemento("button", { className: "principal", textContent: TEXTOS.criarSala });
+  const botao = criarBotaoComTexto(TEXTOS.criarSala, "seta-direita", {
+    classe: "principal",
+    iconeDepois: true,
+  });
   const { campo, rotulo } = criarCampoNome(() => botao.click());
   botao.addEventListener("click", () => criarSala(botao, campo));
 
+  const frase = criarElemento("p", {
+    className: "frase-apresentacao",
+    textContent: TEXTOS.fraseApresentacao,
+  });
   const linha = criarElemento("div", { className: "linha-nome" }, [campo, botao]);
-  telaInicio.replaceChildren(rotulo, linha);
+  telaInicio.replaceChildren(frase, rotulo, linha);
   telaInicio.hidden = false;
+  reiniciarAnimacao(telaInicio);
 }
 
 function criarSala(botao, campo) {
@@ -226,7 +277,8 @@ function criarSala(botao, campo) {
 
   // Desabilitar já no clique impede que cliques repetidos criem várias salas.
   botao.disabled = true;
-  botao.textContent = TEXTOS.criandoSala;
+  trocarTextoBotao(botao, TEXTOS.criandoSala);
+  marcarCarregando(botao, true);
   limparMensagem();
 
   const promessaSala = fetch("/api/salas", { method: "POST" }).then((resposta) => {
@@ -251,7 +303,8 @@ function criarSala(botao, campo) {
     },
     () => {
       botao.disabled = false;
-      botao.textContent = TEXTOS.criarSala;
+      trocarTextoBotao(botao, TEXTOS.criarSala);
+      marcarCarregando(botao, false);
       mostrarMensagem(TEXTOS.erroCriar);
     },
   );
@@ -260,9 +313,9 @@ function criarSala(botao, campo) {
 // ---------- Tela de nome ----------
 
 function mostrarTelaNome(idSala) {
-  const botao = criarElemento("button", {
-    className: "principal",
-    textContent: TEXTOS.entrarNaSala,
+  const botao = criarBotaoComTexto(TEXTOS.entrarNaSala, "seta-direita", {
+    classe: "principal",
+    iconeDepois: true,
   });
   const { campo, rotulo } = criarCampoNome(() => botao.click());
   botao.addEventListener("click", () => {
@@ -293,7 +346,7 @@ function mostrarTelaSala(idSala, nome) {
   campoLink.setAttribute("aria-label", TEXTOS.rotuloLink);
   campoLink.addEventListener("focus", () => campoLink.select());
 
-  const botaoCopiar = criarElemento("button", { textContent: TEXTOS.copiarLink });
+  const botaoCopiar = criarBotaoComTexto(TEXTOS.copiarLink, "copiar");
   botaoCopiar.addEventListener("click", async () => {
     if (await copiarLink(link)) {
       mostrarMensagem(TEXTOS.linkCopiado, { temporaria: true });
@@ -303,7 +356,11 @@ function mostrarTelaSala(idSala, nome) {
     }
   });
 
-  const tituloLista = criarElemento("h2", { textContent: TEXTOS.tituloLista(0) });
+  const textoTituloLista = criarElemento("span", { textContent: TEXTOS.tituloLista(0) });
+  const tituloLista = criarElemento("h2", { className: "titulo-lista" }, [
+    criarIcone("usuarios"),
+    textoTituloLista,
+  ]);
   const lista = criarElemento("ul", { id: "lista-participantes" });
   const areaVideos = criarElemento("section", { id: "area-videos", hidden: true });
   const areaTela = criarAreaTela({
@@ -377,7 +434,9 @@ function mostrarTelaSala(idSala, nome) {
     areaTela.mostrarRecados(ultimosRecados, idProprio);
   }
 
-  const botaoSom = criarElemento("button", { textContent: TEXTOS.ativarSom, hidden: true });
+  // Pedido de ação que a pessoa precisa notar: fica com texto visível, mesmo na barra (research §4).
+  const botaoSom = criarBotaoComTexto(TEXTOS.ativarSom, "som", { classe: "principal ativar-som" });
+  botaoSom.hidden = true;
   const midia = criarMidia({
     enviarSinal: (para, dados) => sala.enviar({ tipo: "sinal", para, dados }),
     aoMudarSomBloqueado: (bloqueado) => (botaoSom.hidden = !bloqueado),
@@ -406,8 +465,7 @@ function mostrarTelaSala(idSala, nome) {
     desligar: () => midia.desligarCamera(),
     aoMudar: (ligada) => {
       sala.enviar({ tipo: "camera", ligada });
-      // Ao desligar, a própria prévia já foi descartada: o quadro fica sem imagem até a lista
-      // voltar do servidor sem ele (instantes depois).
+      // Ao desligar, a própria prévia já foi descartada: o quadro mostra o avatar (T09 FR-017).
       atualizarVideos();
     },
   });
@@ -420,7 +478,9 @@ function mostrarTelaSala(idSala, nome) {
     textContent: TEXTOS.semSuporteCompartilhar,
     hidden: podeCompartilhar,
   });
-  const seletorQualidade = criarSeletorQualidade({ visivel: podeCompartilhar });
+  const { controle: controleQualidade, seletor: seletorQualidade } = criarSeletorQualidade({
+    visivel: podeCompartilhar,
+  });
   seletorQualidade.addEventListener("change", async () => {
     const escolhida = qualidadePorId(seletorQualidade.value);
     if (!compartilhando) {
@@ -458,48 +518,77 @@ function mostrarTelaSala(idSala, nome) {
     },
   });
 
-  // O link, os botões de mídia e o "Ativar som" ficam no topo da sala, sempre visíveis.
-  const linhaLink = criarElemento("div", { className: "linha-link" }, [
-    campoLink,
-    botaoCopiar,
+  const linhaLink = criarElemento("div", { className: "linha-link" }, [campoLink, botaoCopiar]);
+  // Os botões de mídia e o "Ativar som" ficam numa barra fixa no rodapé, sempre visível (T09).
+  const barraControles = criarElemento("nav", { className: "barra-controles" }, [
     microfone.botao,
     camera.botao,
     tela.botao,
-    seletorQualidade,
+    controleQualidade,
     botaoSom,
   ]);
+  barraControles.setAttribute("aria-label", TEXTOS.tituloSala);
   if (!podeCompartilhar) tela.desabilitar();
 
-  // A tela compartilhada fica acima das câmeras (FR-006).
-  mostrarNaSala(
+  // Áreas da sala (T09 contracts/ui.md "Sala — áreas"): topo, palco com a tela compartilhada e, ao
+  // lado (ou abaixo, em janelas estreitas), câmeras e participantes.
+  const topo = criarElemento("div", { className: "sala-topo" }, [
     titulo,
+    avisoAnfitriao,
     linhaLink,
     avisoSemSuporte,
-    areaTela.elemento,
+  ]);
+  const palco = criarElemento("div", { className: "sala-palco" }, [areaTela.elemento]);
+  const lateral = criarElemento("aside", { className: "sala-lateral" }, [
     areaVideos,
-    avisoAnfitriao,
     tituloLista,
     lista,
-  );
+  ]);
+  mostrarNaSala(topo, palco, lateral, barraControles);
+  telaSala.classList.add("sala");
+
+  // Itens da lista por id: só quem entra ou sai é animado (T09 research §5).
+  const itensLista = new Map();
+  function mostrarLista(participantes, idVoce) {
+    const desejados = rotularParticipantes(participantes, idVoce).map((item, indice) => {
+      let li = itensLista.get(item.id);
+      if (!li) {
+        li = criarElemento("li");
+        itensLista.set(item.id, li);
+        animarEntrada(li);
+      }
+      li.classList.toggle("voce", item.ehVoce);
+      const marcas = [];
+      if (item.ehAnfitriao) marcas.push(criarMarca("coroa", "marca-anfitriao"));
+      if (participantes[indice].tela) marcas.push(criarMarca("monitor", "marca-tela"));
+      li.replaceChildren(
+        criarIndicador(
+          item.microfoneLigado ? "microfone" : "microfone-desligado",
+          item.microfoneLigado,
+          { classe: "indicador-microfone", rotulo: item.rotuloMicrofone },
+        ),
+        criarIndicador(item.cameraLigada ? "camera" : "camera-desligada", item.cameraLigada, {
+          classe: "indicador-camera",
+          rotulo: item.rotuloCamera,
+        }),
+        criarElemento("span", { className: "nome-participante", textContent: item.texto }),
+        ...marcas,
+      );
+      return li;
+    });
+    const presentes = new Set(participantes.map(({ id }) => id));
+    for (const [id, li] of itensLista) {
+      if (presentes.has(id)) continue;
+      itensLista.delete(id);
+      removerComAnimacao(li);
+    }
+    ordenarFilhos(lista, desejados);
+  }
 
   const sala = conectar(idSala, nome, {
     aoReceberLista(participantes, idVoce) {
-      tituloLista.textContent = TEXTOS.tituloLista(participantes.length);
-      lista.replaceChildren(
-        ...rotularParticipantes(participantes, idVoce).map((item) =>
-          criarElemento("li", { className: item.ehVoce ? "voce" : "" }, [
-            criarIndicador(item.microfoneLigado ? "🎤" : "🔇", item.microfoneLigado, {
-              classe: "indicador-microfone",
-              rotulo: item.rotuloMicrofone,
-            }),
-            criarIndicador("📷", item.cameraLigada, {
-              classe: "indicador-camera",
-              rotulo: item.rotuloCamera,
-            }),
-            item.texto,
-          ]),
-        ),
-      );
+      textoTituloLista.textContent = TEXTOS.tituloLista(participantes.length);
+      mostrarLista(participantes, idVoce);
       avisoAnfitriao.hidden = !souAnfitriao(participantes, idVoce);
       // Antes da mídia: ela pode pedir para redesenhar a tela (aoChegarVideo) com a lista nova.
       ultimaLista = participantes;
@@ -522,15 +611,23 @@ function mostrarTelaSala(idSala, nome) {
 
 // Escolha da qualidade do compartilhamento (T06). Começa na última qualidade usada neste
 // navegador (ou na padrão); some junto com o botão quando o navegador não permite compartilhar.
+// T09 research §4: o <select> fica transparente sobre o ícone, então o clique abre o menu nativo e a
+// lógica da T06 não muda; o nome aparece na dica do invólucro e no `aria-label` do <select>.
 function criarSeletorQualidade({ visivel }) {
   const seletor = criarElemento(
     "select",
-    { className: "qualidade", title: TEXTOS.qualidadeDoCompartilhamento, hidden: !visivel },
+    { className: "qualidade" },
     QUALIDADES.map(({ id, nome }) => criarElemento("option", { value: id, textContent: nome })),
   );
   seletor.setAttribute("aria-label", TEXTOS.qualidadeDoCompartilhamento);
   seletor.value = qualidadePorId(lerArmazenado(CHAVE_QUALIDADE)).id;
-  return seletor;
+  const controle = criarElemento(
+    "div",
+    { className: "controle controle-qualidade", hidden: !visivel },
+    [criarIcone("qualidade"), seletor],
+  );
+  controle.dataset.dica = TEXTOS.qualidadeDoCompartilhamento;
+  return { controle, seletor };
 }
 
 // Botão que liga e desliga um dispositivo (microfone, câmera ou compartilhamento de tela). Começa
@@ -538,8 +635,9 @@ function criarSeletorQualidade({ visivel }) {
 // chamado quando o dispositivo de fato liga ou desliga (`resultado` é o que `ligar` devolveu).
 // Falhas só geram mensagem para a própria pessoa; a sala continua funcionando. Ver FR-001 a FR-012
 // da T03 e da T04 e FR-010 a FR-012 da T05.
+// T09: só ícone; o nome do estado atual fica no `aria-label`, que também é a dica (research §4).
 function criarBotaoDispositivo(textos, { classe, ligar, desligar, aoMudar }) {
-  const botao = criarElemento("button", { className: classe });
+  const botao = criarElemento("button", { className: `controle ${classe}` });
   let ligado = false;
   let mensagemDeErro = null;
   let indisponivel = false;
@@ -551,7 +649,9 @@ function criarBotaoDispositivo(textos, { classe, ligar, desligar, aoMudar }) {
 
   function mostrarEstado() {
     botao.disabled = indisponivel;
-    botao.textContent = ligado ? textos.desligar : textos.ligar;
+    botao.classList.remove("carregando");
+    botao.replaceChildren(criarIcone(ligado ? textos.icones.ligado : textos.icones.desligado));
+    botao.setAttribute("aria-label", ligado ? textos.desligar : textos.ligar);
     botao.setAttribute("aria-pressed", String(ligado));
   }
 
@@ -566,7 +666,9 @@ function criarBotaoDispositivo(textos, { classe, ligar, desligar, aoMudar }) {
     }
     // Desabilitado enquanto o navegador pergunta: cliques repetidos não abrem outro pedido.
     botao.disabled = true;
-    botao.textContent = textos.ligando;
+    botao.classList.add("carregando");
+    botao.replaceChildren(criarIconeCarregando());
+    botao.setAttribute("aria-label", textos.ligando);
     try {
       const resultado = await ligar();
       ligado = true;
@@ -601,24 +703,29 @@ function criarBotaoDispositivo(textos, { classe, ligar, desligar, aoMudar }) {
 
 // Ícone ao lado do nome, com o estado em texto para leitores de tela e ao passar o mouse.
 function criarIndicador(icone, ligado, { classe, rotulo }) {
-  const indicador = criarElemento("span", {
-    className: ligado ? `${classe} ligado` : classe,
-    textContent: icone,
-    title: rotulo,
-  });
+  const indicador = criarElemento(
+    "span",
+    { className: ligado ? `${classe} ligado` : classe, title: rotulo },
+    [criarIcone(icone)],
+  );
   indicador.setAttribute("role", "img");
   indicador.setAttribute("aria-label", rotulo);
   return indicador;
+}
+
+// Marca decorativa depois do nome (anfitrião, compartilhando): o texto do item já diz o anfitrião
+// e a miniatura já anuncia quem compartilha.
+function criarMarca(icone, classe) {
+  const marca = criarIcone(icone);
+  marca.classList.add(classe);
+  return marca;
 }
 
 // ---------- Telas de erro ----------
 
 function mostrarSalaInexistente() {
   const aviso = criarElemento("p", { textContent: TEXTOS.salaInexistente });
-  const botao = criarElemento("button", {
-    className: "principal",
-    textContent: TEXTOS.criarNovaSala,
-  });
+  const botao = criarBotaoComTexto(TEXTOS.criarNovaSala, "recarregar", { classe: "principal" });
   botao.addEventListener("click", () => irPara("/"));
   mostrarNaSala(aviso, botao);
 }
@@ -626,10 +733,7 @@ function mostrarSalaInexistente() {
 function mostrarSalaCheia(idSala) {
   const titulo = criarElemento("h1", { textContent: TEXTOS.salaCheiaTitulo });
   const texto = criarElemento("p", { textContent: TEXTOS.salaCheiaTexto });
-  const botao = criarElemento("button", {
-    className: "principal",
-    textContent: TEXTOS.tentarDeNovo,
-  });
+  const botao = criarBotaoComTexto(TEXTOS.tentarDeNovo, "recarregar", { classe: "principal" });
   botao.addEventListener("click", () => {
     limparMensagem();
     abrirSala(idSala);
@@ -639,10 +743,7 @@ function mostrarSalaCheia(idSala) {
 
 function mostrarErroComNovaTentativa(texto, tentarDeNovo) {
   const aviso = criarElemento("p", { textContent: texto });
-  const botao = criarElemento("button", {
-    className: "principal",
-    textContent: TEXTOS.tentarDeNovo,
-  });
+  const botao = criarBotaoComTexto(TEXTOS.tentarDeNovo, "recarregar", { classe: "principal" });
   botao.addEventListener("click", tentarDeNovo);
   mostrarNaSala(aviso, botao);
 }
