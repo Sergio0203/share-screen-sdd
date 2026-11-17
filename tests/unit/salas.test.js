@@ -91,7 +91,9 @@ test("entrar com a chave do criador torna a pessoa anfitriã", () => {
   const { id, chave } = registro.criar();
   const { participante } = entrar(registro, id, "Ana", chave);
   assert.equal(participante.chave, chave);
-  assert.deepEqual(registro.listar(id), [{ id: participante.id, nome: "Ana", anfitriao: true }]);
+  assert.deepEqual(registro.listar(id), [
+    { id: participante.id, nome: "Ana", anfitriao: true, microfone: false },
+  ]);
 });
 
 test("entrar sem chave gera uma chave nova e não é anfitrião", () => {
@@ -141,7 +143,8 @@ test("listar segue a ordem de entrada e não expõe chaves", () => {
     lista.map((p) => p.nome),
     ["Ana", "Bruno", "Carla"],
   );
-  for (const item of lista) assert.deepEqual(Object.keys(item).sort(), ["anfitriao", "id", "nome"]);
+  for (const item of lista)
+    assert.deepEqual(Object.keys(item).sort(), ["anfitriao", "id", "microfone", "nome"]);
 });
 
 test("conexoes devolve as conexões dos presentes", () => {
@@ -174,11 +177,13 @@ test("entrar com chave já presente substitui a conexão sem duplicar", () => {
   const segunda = entrar(registro, id, "Aninha", chave);
 
   assert.equal(segunda.conexaoSubstituida, primeira.conexao);
-  assert.equal(segunda.participante.id, primeira.participante.id);
-  assert.deepEqual(
-    registro.listar(id).map((p) => p.nome),
-    ["Aninha", "Bruno"],
-  );
+  // Id público novo: os outros recriam a conexão de voz com a página recarregada (T03).
+  assert.notEqual(segunda.participante.id, primeira.participante.id);
+  const [aninha, bruno] = registro.listar(id);
+  assert.equal(aninha.id, segunda.participante.id);
+  assert.equal(aninha.nome, "Aninha");
+  assert.equal(aninha.anfitriao, true);
+  assert.equal(bruno.nome, "Bruno");
   assert.deepEqual(registro.conexoes(id)[0], segunda.conexao);
 });
 
@@ -195,6 +200,76 @@ test("primeira entrada não tem conexão substituída", () => {
   const { registro } = novoRegistro();
   const { id } = registro.criar();
   assert.equal(entrar(registro, id, "Ana").conexaoSubstituida, null);
+});
+
+// ---------- Busca por id público e por conexão (T03) ----------
+
+test("conexaoPorId devolve a conexão do participante ou null", () => {
+  const { registro } = novoRegistro();
+  const { id, chave } = registro.criar();
+  const ana = entrar(registro, id, "Ana", chave);
+  assert.equal(registro.conexaoPorId(id, ana.participante.id), ana.conexao);
+  assert.equal(registro.conexaoPorId(id, "x".repeat(22)), null);
+  assert.equal(registro.conexaoPorId("y".repeat(22), ana.participante.id), null);
+
+  entrar(registro, id, "Ana", chave);
+  assert.equal(registro.conexaoPorId(id, ana.participante.id), null, "id antigo some");
+});
+
+test("idPorConexao devolve o id público ou null", () => {
+  const { registro } = novoRegistro();
+  const { id, chave } = registro.criar();
+  const ana = entrar(registro, id, "Ana", chave);
+  assert.equal(registro.idPorConexao(id, ana.conexao), ana.participante.id);
+  assert.equal(registro.idPorConexao(id, {}), null);
+
+  const nova = entrar(registro, id, "Ana", chave);
+  assert.equal(registro.idPorConexao(id, ana.conexao), null, "conexão substituída");
+  assert.equal(registro.idPorConexao(id, nova.conexao), nova.participante.id);
+});
+
+// ---------- Estado do microfone (T03) ----------
+
+test("definirMicrofone muda o estado na lista e avisa só quando muda", () => {
+  const { registro, mudancas } = novoRegistro();
+  const { id, chave } = registro.criar();
+  const ana = entrar(registro, id, "Ana", chave);
+  assert.equal(registro.listar(id)[0].microfone, false);
+
+  mudancas.length = 0;
+  registro.definirMicrofone(id, ana.conexao, true);
+  assert.equal(registro.listar(id)[0].microfone, true);
+  assert.deepEqual(mudancas, [id]);
+
+  registro.definirMicrofone(id, ana.conexao, true);
+  assert.deepEqual(mudancas, [id], "mesmo valor não avisa de novo");
+
+  registro.definirMicrofone(id, ana.conexao, false);
+  assert.equal(registro.listar(id)[0].microfone, false);
+  assert.deepEqual(mudancas, [id, id]);
+});
+
+test("definirMicrofone ignora conexão desconhecida ou substituída", () => {
+  const { registro, mudancas } = novoRegistro();
+  const { id, chave } = registro.criar();
+  const antiga = entrar(registro, id, "Ana", chave);
+  entrar(registro, id, "Ana", chave);
+  mudancas.length = 0;
+
+  registro.definirMicrofone(id, antiga.conexao, true);
+  registro.definirMicrofone(id, {}, true);
+  registro.definirMicrofone("x".repeat(22), antiga.conexao, true);
+  assert.equal(registro.listar(id)[0].microfone, false);
+  assert.deepEqual(mudancas, []);
+});
+
+test("substituir a conexão desliga o microfone", () => {
+  const { registro } = novoRegistro();
+  const { id, chave } = registro.criar();
+  const ana = entrar(registro, id, "Ana", chave);
+  registro.definirMicrofone(id, ana.conexao, true);
+  entrar(registro, id, "Ana", chave);
+  assert.equal(registro.listar(id)[0].microfone, false);
 });
 
 // ---------- Notificações ----------

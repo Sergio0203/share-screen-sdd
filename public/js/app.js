@@ -2,6 +2,8 @@ import { TEXTOS } from "./textos.js";
 import { copiarAoCriar, copiarLink } from "./copiar.js";
 import { NOME_MAXIMO, motivoNomeInvalido, normalizarNome } from "./nome.js";
 import { rotularParticipantes, souAnfitriao } from "./participantes.js";
+import { criarVoz } from "./voz.js";
+import { classificarErroMicrofone } from "./voz-regras.js";
 
 const DURACAO_CONFIRMACAO_MS = 2500;
 const CHAVE_NOME = "nomeExibicao";
@@ -12,6 +14,7 @@ const areaMensagem = document.getElementById("mensagem");
 
 let temporizadorMensagem = null;
 let conexaoAtual = null;
+let vozAtual = null;
 
 // ---------- Mensagens ----------
 
@@ -31,6 +34,17 @@ function limparMensagem() {
   clearTimeout(temporizadorMensagem);
   areaMensagem.textContent = "";
 }
+
+// Apaga a mensagem só se ela ainda for a mesma (outra mais recente não deve sumir).
+function limparMensagemSeFor(texto) {
+  if (texto && areaMensagem.textContent === texto) limparMensagem();
+}
+
+const MENSAGENS_ERRO_MICROFONE = {
+  permissao: TEXTOS.erroPermissaoMicrofone,
+  semMicrofone: TEXTOS.semMicrofone,
+  falha: TEXTOS.erroLigarMicrofone,
+};
 
 // ---------- Utilidades ----------
 
@@ -251,25 +265,138 @@ function mostrarTelaSala(idSala, nome) {
   const tituloLista = criarElemento("h2", { textContent: TEXTOS.tituloLista(0) });
   const lista = criarElemento("ul", { id: "lista-participantes" });
 
-  // O link e o botão ficam no topo da sala, sempre visíveis.
-  const linhaLink = criarElemento("div", { className: "linha-link" }, [campoLink, botaoCopiar]);
+  // Pessoas com quem a conexão de voz falhou e a última lista recebida (FR-014).
+  const paresSemVoz = new Set();
+  let ultimaLista = [];
+  let avisoSemVoz = null;
+
+  // Avisa de quem não dá para ouvir; só importa enquanto essa pessoa está com o microfone ligado.
+  function atualizarAvisoSemVoz() {
+    const inaudivel = ultimaLista.find((p) => paresSemVoz.has(p.id) && p.microfone);
+    if (inaudivel) {
+      avisoSemVoz = TEXTOS.naoFoiPossivelOuvir(inaudivel.nome);
+      mostrarMensagem(avisoSemVoz);
+    } else {
+      limparMensagemSeFor(avisoSemVoz);
+      avisoSemVoz = null;
+    }
+  }
+
+  const botaoSom = criarElemento("button", { textContent: TEXTOS.ativarSom, hidden: true });
+  const voz = criarVoz({
+    enviarSinal: (para, dados) => sala.enviar({ tipo: "sinal", para, dados }),
+    aoMudarSomBloqueado: (bloqueado) => (botaoSom.hidden = !bloqueado),
+    aoFalharPar(id) {
+      paresSemVoz.add(id);
+      atualizarAvisoSemVoz();
+    },
+    aoMicrofoneEncerrado: () => microfone.marcarDesconectado(),
+  });
+  vozAtual = voz;
+  botaoSom.addEventListener("click", () => voz.ativarSom());
+  const microfone = criarBotaoMicrofone(voz, {
+    aoMudar: (ligado) => sala.enviar({ tipo: "microfone", ligado }),
+  });
+
+  // O link, o microfone e o "Ativar som" ficam no topo da sala, sempre visíveis.
+  const linhaLink = criarElemento("div", { className: "linha-link" }, [
+    campoLink,
+    botaoCopiar,
+    microfone.botao,
+    botaoSom,
+  ]);
   mostrarNaSala(titulo, linhaLink, avisoAnfitriao, tituloLista, lista);
 
-  conectar(idSala, nome, {
+  const sala = conectar(idSala, nome, {
     aoReceberLista(participantes, idVoce) {
       tituloLista.textContent = TEXTOS.tituloLista(participantes.length);
       lista.replaceChildren(
         ...rotularParticipantes(participantes, idVoce).map((item) =>
-          criarElemento("li", { textContent: item.texto, className: item.ehVoce ? "voce" : "" }),
+          criarElemento("li", { className: item.ehVoce ? "voce" : "" }, [
+            criarIndicadorMicrofone(item),
+            item.texto,
+          ]),
         ),
       );
       avisoAnfitriao.hidden = !souAnfitriao(participantes, idVoce);
+      voz.atualizarParticipantes(participantes, idVoce);
+      ultimaLista = participantes;
+      atualizarAvisoSemVoz();
     },
+    aoReceberSinal: (de, dados) => voz.receberSinal(de, dados),
   });
 
   return {
     destacarBotaoCopiar: () => botaoCopiar.classList.add("destaque"),
   };
+}
+
+// Botão que liga e desliga o próprio microfone. Começa sempre desligado (FR-001), e a permissão
+// só é pedida no primeiro clique (FR-002).
+// `aoMudar(ligado)` só é chamado quando o microfone de fato liga ou desliga.
+// Falhas só geram mensagem para a própria pessoa; a sala continua funcionando (FR-010 a FR-012).
+function criarBotaoMicrofone(voz, { aoMudar }) {
+  const botao = criarElemento("button", { className: "microfone" });
+  let ligado = false;
+  let mensagemDeErro = null;
+
+  function mostrarErro(texto) {
+    mensagemDeErro = texto;
+    mostrarMensagem(texto);
+  }
+
+  function mostrarEstado() {
+    botao.disabled = false;
+    botao.textContent = ligado ? TEXTOS.desligarMicrofone : TEXTOS.ligarMicrofone;
+    botao.setAttribute("aria-pressed", String(ligado));
+  }
+
+  botao.addEventListener("click", async () => {
+    if (ligado) {
+      voz.desligarMicrofone();
+      ligado = false;
+      aoMudar(false);
+      mostrarEstado();
+      return;
+    }
+    // Desabilitado enquanto o navegador pergunta: cliques repetidos não abrem outro pedido.
+    botao.disabled = true;
+    botao.textContent = TEXTOS.ligandoMicrofone;
+    try {
+      await voz.ligarMicrofone();
+      ligado = true;
+      aoMudar(true);
+      limparMensagemSeFor(mensagemDeErro);
+    } catch (erro) {
+      mostrarErro(MENSAGENS_ERRO_MICROFONE[classificarErroMicrofone(erro?.name)]);
+    }
+    mostrarEstado();
+  });
+
+  mostrarEstado();
+  return {
+    botao,
+    // O microfone parou sozinho (desconectado ou permissão retirada durante o uso).
+    marcarDesconectado() {
+      if (!ligado) return;
+      ligado = false;
+      aoMudar(false);
+      mostrarEstado();
+      mostrarErro(TEXTOS.microfoneDesconectado);
+    },
+  };
+}
+
+// Ícone ao lado do nome, com o estado em texto para leitores de tela e ao passar o mouse (FR-008).
+function criarIndicadorMicrofone({ microfoneLigado, rotuloMicrofone }) {
+  const indicador = criarElemento("span", {
+    className: microfoneLigado ? "indicador-microfone ligado" : "indicador-microfone",
+    textContent: microfoneLigado ? "🎤" : "🔇",
+    title: rotuloMicrofone,
+  });
+  indicador.setAttribute("role", "img");
+  indicador.setAttribute("aria-label", rotuloMicrofone);
+  return indicador;
 }
 
 // ---------- Telas de erro ----------
@@ -314,7 +441,7 @@ function mostrarAviso(texto) {
 
 // ---------- Conexão com a sala (contracts/websocket.md) ----------
 
-function conectar(idSala, nome, { aoReceberLista }) {
+function conectar(idSala, nome, { aoReceberLista, aoReceberSinal }) {
   const protocolo = location.protocol === "https:" ? "wss:" : "ws:";
   const conexao = new WebSocket(`${protocolo}//${location.host}/ws`);
   conexaoAtual = conexao;
@@ -333,16 +460,28 @@ function conectar(idSala, nome, { aoReceberLista }) {
       salvarArmazenado(chaveDaSala(idSala), mensagem.chave);
     } else if (mensagem.tipo === "participantes") {
       aoReceberLista(mensagem.lista, idVoce);
+    } else if (mensagem.tipo === "sinal") {
+      aoReceberSinal(mensagem.de, mensagem.dados);
     } else if (mensagem.tipo === "erro") {
       recusada = true;
+      encerrarVoz();
       tratarErro(idSala, mensagem.codigo);
     }
   });
 
   conexao.addEventListener("close", () => {
+    if (conexaoAtual !== conexao) return;
+    // Fora da sala, a voz também acaba e o microfone é liberado (FR-015).
+    encerrarVoz();
     // Só avisa se for uma queda inesperada da conexão ainda em uso.
-    if (conexaoAtual === conexao && !recusada) mostrarMensagem(TEXTOS.conexaoPerdida);
+    if (!recusada) mostrarMensagem(TEXTOS.conexaoPerdida);
   });
+
+  return {
+    enviar(mensagem) {
+      if (conexao.readyState === WebSocket.OPEN) conexao.send(JSON.stringify(mensagem));
+    },
+  };
 }
 
 function tratarErro(idSala, codigo) {
@@ -361,14 +500,21 @@ function tratarErro(idSala, codigo) {
 }
 
 function encerrarConexao() {
+  encerrarVoz();
   const conexao = conexaoAtual;
   conexaoAtual = null;
   conexao?.close();
 }
 
+function encerrarVoz() {
+  vozAtual?.encerrar();
+  vozAtual = null;
+}
+
 // Ao recarregar ou fechar a aba, o fechamento da conexão é esperado: não mostrar erro.
 window.addEventListener("pagehide", () => {
   conexaoAtual = null;
+  encerrarVoz();
 });
 window.addEventListener("popstate", renderizar);
 

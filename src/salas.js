@@ -5,6 +5,7 @@ import { normalizarNome } from "../public/js/nome.js";
 // Ciclo de vida da sala: criada vazia → com participantes → vazia por `toleranciaMs` → expirada.
 // O anfitrião é quem tem a chave `chaveAnfitriao`; ela pode passar para outra pessoa.
 // `aoMudar(idSala)` avisa quem usa o registro que a lista de participantes mudou.
+// `conexaoPorId`/`idPorConexao` servem para repassar sinais de voz entre participantes (T03).
 export function criarRegistroSalas({
   toleranciaMs = 60_000,
   capacidade = 6,
@@ -81,6 +82,11 @@ export function criarRegistroSalas({
       const conexaoSubstituida = existente.conexao;
       existente.conexao = conexao;
       existente.nome = nomeNormalizado;
+      // Id público novo: a página nova não tem as conexões de voz antigas, e quem vê o id antigo
+      // sumir e o novo aparecer refaz a conexão sozinho (T03, research §5).
+      existente.id = gerarSegredo();
+      // Toda entrada começa com o microfone desligado, inclusive ao recarregar (FR-001).
+      existente.microfoneLigado = false;
       aoMudar(idSala);
       return { participante: publico(existente), conexaoSubstituida };
     }
@@ -92,6 +98,7 @@ export function criarRegistroSalas({
       chave: idValido(chave) ? chave : gerarSegredo(),
       nome: nomeNormalizado,
       entradaEm: Date.now(),
+      microfoneLigado: false,
       conexao,
     };
     sala.participantes.set(participante.chave, participante);
@@ -104,7 +111,7 @@ export function criarRegistroSalas({
   function sair(idSala, conexao) {
     const sala = salas.get(idSala);
     if (!sala) return;
-    const participante = [...sala.participantes.values()].find((p) => p.conexao === conexao);
+    const participante = participantePorConexao(idSala, conexao);
     // Conexão já substituída por outra aba: a pessoa continua na sala.
     if (!participante) return;
 
@@ -127,7 +134,32 @@ export function criarRegistroSalas({
       id: p.id,
       nome: p.nome,
       anfitriao: segredosIguais(p.chave, sala.chaveAnfitriao),
+      microfone: p.microfoneLigado,
     }));
+  }
+
+  function definirMicrofone(idSala, conexao, ligado) {
+    const participante = participantePorConexao(idSala, conexao);
+    // Conexão já substituída ou fora da sala: o estado de quem está na sala não muda.
+    if (!participante || participante.microfoneLigado === ligado) return;
+    participante.microfoneLigado = ligado;
+    aoMudar(idSala);
+  }
+
+  function participantePorConexao(idSala, conexao) {
+    const sala = salas.get(idSala);
+    if (!sala) return null;
+    return [...sala.participantes.values()].find((p) => p.conexao === conexao) ?? null;
+  }
+
+  function conexaoPorId(idSala, idPublico) {
+    const sala = salas.get(idSala);
+    if (!sala) return null;
+    return [...sala.participantes.values()].find((p) => p.id === idPublico)?.conexao ?? null;
+  }
+
+  function idPorConexao(idSala, conexao) {
+    return participantePorConexao(idSala, conexao)?.id ?? null;
   }
 
   function conexoes(idSala) {
@@ -135,7 +167,17 @@ export function criarRegistroSalas({
     return sala ? [...sala.participantes.values()].map((p) => p.conexao) : [];
   }
 
-  return { criar, consultar, entrar, sair, listar, conexoes };
+  return {
+    criar,
+    consultar,
+    entrar,
+    sair,
+    listar,
+    conexoes,
+    definirMicrofone,
+    conexaoPorId,
+    idPorConexao,
+  };
 }
 
 function publico({ id, chave }) {

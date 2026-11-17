@@ -51,11 +51,12 @@ button:disabled {
 .linha-link {
   width: 100%;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 
 .linha-link input {
-  flex: 1;
+  flex: 1 1 14rem;
   font: inherit;
   padding: 0.6rem;
   border: 1px solid #c9ced6;
@@ -121,4 +122,23 @@ h2 {
 
 #lista-participantes li.voce {
   font-weight: 600;
+}
+
+/* Microfone ligado: destaque forte para a pessoa saber que está sendo ouvida. */
+.microfone[aria-pressed="true"] {
+  background: #1a7f37;
+  border-color: #1a7f37;
+  color: #fff;
+}
+
+.indicador-microfone {
+  display: inline-block;
+  width: 1.6rem;
+  margin-right: 0.4rem;
+  text-align: center;
+  opacity: 0.45;
+}
+
+.indicador-microfone.ligado {
+  opacity: 1;
 }

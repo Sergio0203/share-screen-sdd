@@ -8,6 +8,8 @@ import { criarRegistroSalas } from "./salas.js";
 
 const PASTA_PUBLICA = fileURLToPath(new URL("../public/", import.meta.url));
 
+const TAMANHO_MAXIMO_MENSAGEM = 64 * 1024;
+
 const TIPOS_DE_CONTEUDO = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -44,7 +46,8 @@ export function criarServidor({ intervaloPingMs = 1000, ...opcoesRegistro } = {}
     responderNaoEncontrado(resposta);
   });
 
-  const servidorWs = new WebSocketServer({ noServer: true });
+  // Mensagens de sinal de voz têm poucos KB; o limite protege o servidor de mensagens enormes.
+  const servidorWs = new WebSocketServer({ noServer: true, maxPayload: TAMANHO_MAXIMO_MENSAGEM });
   servidorWs.on("connection", (conexao) => atenderConexao(registro, conexao));
 
   servidor.on("upgrade", (requisicao, socket, cabecalho) => {
@@ -109,37 +112,78 @@ function consultarSalaPorHttp(registro, idSala, requisicao, resposta) {
   responderJson(resposta, 200, situacao);
 }
 
-// Contrato: specs/002-entrar-sala-link/contracts/websocket.md
+// Contratos: specs/002-entrar-sala-link/contracts/websocket.md e
+// specs/003-conversar-por-voz/contracts/websocket.md
 function atenderConexao(registro, conexao) {
+  // Sala em que esta conexão entrou; nula até um `entrar` bem-sucedido.
   let idSalaAtual = null;
   conexao.vivo = true;
   conexao.on("pong", () => (conexao.vivo = true));
+  // Erros de protocolo (ex.: mensagem acima do limite) já fazem o `ws` fechar a conexão; sem este
+  // ouvinte, o evento derrubaria o processo.
+  conexao.on("error", () => {});
 
   conexao.on("message", (dados) => {
     const mensagem = lerJson(dados.toString());
-    if (mensagem?.tipo !== "entrar" || idSalaAtual !== null) {
-      recusar(conexao, "mensagem-invalida");
+    const jaEntrou = idSalaAtual !== null;
+
+    if (mensagem?.tipo === "entrar" && !jaEntrou) {
+      if (tratarEntrar(registro, conexao, mensagem)) idSalaAtual = mensagem.idSala;
       return;
     }
-
-    const { idSala, nome, chave } = mensagem;
-    const resultado = idValido(idSala)
-      ? registro.entrar(idSala, { chave, nome, conexao })
-      : { erro: "sala-inexistente" };
-    if (resultado.erro) {
-      recusar(conexao, resultado.erro);
+    if (mensagem?.tipo === "microfone" && jaEntrou) {
+      tratarMicrofone(registro, idSalaAtual, conexao, mensagem);
       return;
     }
-
-    if (resultado.conexaoSubstituida) recusar(resultado.conexaoSubstituida, "aberta-em-outra-aba");
-    idSalaAtual = idSala;
-    const { participante } = resultado;
-    enviar(conexao, { tipo: "entrou", idSala, chave: participante.chave, voce: participante.id });
+    if (mensagem?.tipo === "sinal" && jaEntrou) {
+      tratarSinal(registro, idSalaAtual, conexao, mensagem);
+      return;
+    }
+    recusar(conexao, "mensagem-invalida");
   });
 
   conexao.on("close", () => {
     if (idSalaAtual !== null) registro.sair(idSalaAtual, conexao);
   });
+}
+
+// Devolve true se a pessoa entrou na sala.
+function tratarEntrar(registro, conexao, { idSala, nome, chave }) {
+  const resultado = idValido(idSala)
+    ? registro.entrar(idSala, { chave, nome, conexao })
+    : { erro: "sala-inexistente" };
+  if (resultado.erro) {
+    recusar(conexao, resultado.erro);
+    return false;
+  }
+
+  if (resultado.conexaoSubstituida) recusar(resultado.conexaoSubstituida, "aberta-em-outra-aba");
+  const { participante } = resultado;
+  enviar(conexao, { tipo: "entrou", idSala, chave: participante.chave, voce: participante.id });
+  return true;
+}
+
+// O estado do microfone vai para todos na lista de participantes (enviada em `aoMudar`).
+function tratarMicrofone(registro, idSala, conexao, { ligado }) {
+  if (typeof ligado !== "boolean") {
+    recusar(conexao, "mensagem-invalida");
+    return;
+  }
+  registro.definirMicrofone(idSala, conexao, ligado);
+}
+
+// Repassa ofertas, respostas e candidatos de voz a outra pessoa da mesma sala. O servidor não lê
+// `dados`; só preenche `de`, para ninguém se passar por outra pessoa.
+function tratarSinal(registro, idSala, conexao, { para, dados }) {
+  const dadosValidos = typeof dados === "object" && dados !== null && !Array.isArray(dados);
+  if (typeof para !== "string" || !dadosValidos) {
+    recusar(conexao, "mensagem-invalida");
+    return;
+  }
+  const destino = registro.conexaoPorId(idSala, para);
+  // Destinatário que acabou de sair: ignorar, não é erro de quem enviou.
+  if (destino === null || destino === conexao) return;
+  enviar(destino, { tipo: "sinal", de: registro.idPorConexao(idSala, conexao), dados });
 }
 
 function enviarLista(registro, idSala) {
