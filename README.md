@@ -12,8 +12,9 @@ em tela cheia; se várias pessoas compartilham ao mesmo tempo, cada um escolhe q
 Antes ou durante o compartilhamento, dá para escolher a qualidade: 720p · 30 fps, 1080p · 30 fps
 ou 1080p · 60 fps (a escolha fica lembrada no navegador).
 Para apontar algo na tela compartilhada, aperte `/` com o mouse sobre a imagem e escreva um recado
-de até 100 caracteres: ele aparece ao vivo para todos, naquele ponto da imagem e com o seu nome, e
-some 8 s depois que você para de digitar (Esc apaga na hora). Quem compartilha também vê a própria
+de até 100 caracteres: ele aparece ao vivo para todos, com o seu nome, e acompanha o seu cursor
+enquanto estiver na tela. 8 s depois que você para de digitar, ele some aos poucos (voltar a digitar
+antes disso o mantém; Esc apaga na hora). Cada pessoa tem um recado por vez. Quem compartilha também vê a própria
 tela na sala e pode escrever sobre ela.
 Compartilhar exige Chrome, Edge ou Firefox de computador; pelo celular, dá para assistir.
 

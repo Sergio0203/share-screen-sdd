@@ -359,7 +359,10 @@ h2 {
 
 .recado,
 .caixa-campo-recado {
+  /* Posição aplicada por JS com transform (T08), a partir do canto da camada. */
   position: absolute;
+  left: 0;
+  top: 0;
   box-sizing: border-box;
   max-width: min(22em, 100%);
   padding: 0.3rem 0.55rem;
@@ -374,6 +377,26 @@ h2 {
 .recado {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  /* T08: movimento por transform — desliza até cada posição recebida (research §2). O campo de quem
+     escreve não tem transição: segue o ponteiro na hora. */
+  will-change: transform;
+  transition:
+    transform 100ms linear,
+    opacity 0s;
+}
+
+/* T08: fade de 1 s quando o recado entra em `apagando` (8 s sem teclas); ao sair do fade (uma tecla
+   durante o fade), a opacidade volta a 1 na hora, porque a transição sem `.apagando` é de 0 s. */
+.recado.apagando {
+  opacity: 0;
+  transition:
+    transform 100ms linear,
+    opacity 1s linear;
+}
+
+.caixa-campo-recado.apagando {
+  opacity: 0;
+  transition: opacity 1s linear;
 }
 
 .nome-recado {

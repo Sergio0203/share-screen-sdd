@@ -8,6 +8,7 @@ const TOLERANCIA_MS = 100;
 const INTERVALO_PING_MS = 50;
 // Curto para o teste de "some sozinho", longo o bastante para os outros testes de recado.
 const DURACAO_RECADO_MS = 1000;
+const DURACAO_FADE_MS = 300;
 
 let servidor;
 before(async () => {
@@ -15,6 +16,7 @@ before(async () => {
     toleranciaMs: TOLERANCIA_MS,
     intervaloPingMs: INTERVALO_PING_MS,
     duracaoRecadoMs: DURACAO_RECADO_MS,
+    duracaoFadeMs: DURACAO_FADE_MS,
   });
 });
 after(() => servidor.fechar());
@@ -654,7 +656,7 @@ async function salaComAnaCompartilhando() {
 const esperarRecados = (cliente) => cliente.esperarTipo("recados").then(({ lista }) => lista);
 const semId = (lista) => lista.map(({ id, ...resto }) => resto);
 
-test("recado escrito chega a todos da sala, ao vivo, e fechar/apagar atualizam a lista", async () => {
+test("recado escrito chega a todos da sala, ao vivo, e apagar atualiza a lista", async () => {
   const { ana, bruno, escrever } = await salaComAnaCompartilhando();
   escrever();
   const esperado = {
@@ -664,19 +666,16 @@ test("recado escrito chega a todos da sala, ao vivo, e fechar/apagar atualizam a
     x: 0.5,
     y: 0.5,
     texto: "oi",
-    aberto: true,
+    apagando: false,
   };
   assert.deepEqual(semId(await esperarRecados(ana)), [esperado]);
   const [recado] = await esperarRecados(bruno);
   assert.match(recado.id, /^[A-Za-z0-9_-]{22}$/);
 
-  bruno.enviar({ tipo: "recado", acao: "fechar" });
-  assert.deepEqual(semId(await esperarRecados(ana)), [{ ...esperado, aberto: false }]);
-
   escrever({ texto: "outro" });
-  await esperarRecados(ana);
+  assert.deepEqual(semId(await esperarRecados(ana)), [{ ...esperado, texto: "outro" }]);
   bruno.enviar({ tipo: "recado", acao: "apagar" });
-  assert.deepEqual(semId(await esperarRecados(ana)), [{ ...esperado, aberto: false }]);
+  assert.deepEqual(await esperarRecados(ana), []);
   ana.fechar();
   bruno.fechar();
 });
@@ -694,11 +693,32 @@ test("quem entra depois recebe os recados ativos logo após entrou", async () =>
   for (const cliente of [ana, bruno, carla]) cliente.fechar();
 });
 
-test("o recado some sozinho depois do prazo", async () => {
+test("o recado começa a apagar depois do prazo e some depois do fade", async () => {
   const { ana, bruno, escrever } = await salaComAnaCompartilhando();
   escrever();
-  assert.equal((await esperarRecados(ana)).length, 1);
+  assert.deepEqual(
+    (await esperarRecados(ana)).map(({ apagando }) => apagando),
+    [false],
+  );
+  assert.deepEqual(
+    (await esperarRecados(ana)).map(({ apagando }) => apagando),
+    [true],
+  );
   assert.deepEqual(await esperarRecados(ana), []);
+  ana.fechar();
+  bruno.fechar();
+});
+
+test("escrever durante o fade traz o recado de volta", async () => {
+  const { ana, bruno, escrever } = await salaComAnaCompartilhando();
+  escrever();
+  await esperarRecados(ana);
+  assert.equal((await esperarRecados(ana))[0].apagando, true);
+  escrever({ texto: "voltei" });
+  assert.deepEqual(
+    (await esperarRecados(ana)).map(({ texto, apagando }) => ({ texto, apagando })),
+    [{ texto: "voltei", apagando: false }],
+  );
   ana.fechar();
   bruno.fechar();
 });
@@ -713,9 +733,37 @@ test("quando a tela para de ser compartilhada, os recados somem", async () => {
   bruno.fechar();
 });
 
+test("mover leva o recado para o ponto novo, para todos", async () => {
+  const { ana, bruno, escrever } = await salaComAnaCompartilhando();
+  escrever();
+  const [antes] = await esperarRecados(ana);
+  await esperarRecados(bruno);
+  bruno.enviar({ tipo: "recado", acao: "mover", x: 0.8, y: 0.3 });
+  assert.deepEqual(await esperarRecados(ana), [{ ...antes, x: 0.8, y: 0.3 }]);
+  assert.deepEqual(await esperarRecados(bruno), [{ ...antes, x: 0.8, y: 0.3 }]);
+  ana.fechar();
+  bruno.fechar();
+});
+
+test("mover sem recado é ignorado e a conexão continua", async () => {
+  const { ana, bruno, escrever } = await salaComAnaCompartilhando();
+  bruno.enviar({ tipo: "recado", acao: "mover", x: 0.8, y: 0.3 });
+  escrever({ texto: "depois" });
+  const lista = await esperarRecados(ana);
+  assert.deepEqual(
+    lista.map(({ texto, x, y }) => ({ texto, x, y })),
+    [{ texto: "depois", x: 0.5, y: 0.5 }],
+  );
+  ana.fechar();
+  bruno.fechar();
+});
+
 test("recado com formato errado é recusado com mensagem-invalida", async () => {
   const formatos = [
     { tipo: "recado", acao: "xyz" },
+    { tipo: "recado", acao: "fechar" },
+    { tipo: "recado", acao: "mover", x: "a", y: 0 },
+    { tipo: "recado", acao: "mover", x: 0.5 },
     { tipo: "recado", acao: "escrever", alvo: "a", x: 0, y: 0, texto: 5 },
     { tipo: "recado", acao: "escrever", alvo: "a", x: "0", y: 0, texto: "oi" },
     { tipo: "recado", acao: "escrever", alvo: null, x: 0, y: 0, texto: "oi" },
@@ -734,7 +782,7 @@ test("recado com formato errado é recusado com mensagem-invalida", async () => 
 
 test("recado antes de entrar é recusado", async () => {
   const cliente = await conectar();
-  cliente.enviar({ tipo: "recado", acao: "fechar" });
+  cliente.enviar({ tipo: "recado", acao: "apagar" });
   assert.deepEqual(await cliente.proxima(), { tipo: "erro", codigo: "mensagem-invalida" });
   await cliente.fechada;
 });

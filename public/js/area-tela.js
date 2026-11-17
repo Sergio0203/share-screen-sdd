@@ -1,6 +1,7 @@
 import { TEXTOS } from "./textos.js";
 import { retomarVideos } from "./video.js";
-import { deveAbrirCampo, ehCampoDeTexto } from "./atalho-recado.js";
+import { acaoDaTecla, ehCampoDeTexto } from "./atalho-recado.js";
+import { INTERVALO_POSICAO_MS, devoEnviarPosicao } from "./movimento-recado.js";
 import { areaDaImagem, encaixarNaArea, pixelNaArea, pontoNaImagem } from "./posicao-recado.js";
 import {
   RECADO_MAXIMO,
@@ -23,9 +24,14 @@ const INSERCOES_COLADAS = new Set(["insertFromPaste", "insertFromDrop"]);
 // tela". Ver specs/005-compartilhar-tela/contracts/ui.md e research.md §7.
 // Recados (T07): camada sobre a imagem em destaque e campo aberto com `/`. Ver
 // specs/007-recado-na-tela/contracts/ui.md e research.md §3–§7.
+// T08: o campo segue o ponteiro e fica aberto enquanto o próprio recado existe (Enter e clicar fora
+// não o fecham); fecha quando o recado some da lista ou com Esc. Os recados dos outros deslizam até
+// cada posição e somem com fade. Ver specs/008-recado-segue-cursor/contracts/ui.md e research.md
+// §2–§5.
 // `aoEscolher(id)` é chamado quando a pessoa clica numa miniatura. `aoEscreverRecado(dados)` devolve
-// false se não foi possível enviar; `aoFecharRecado()`/`aoApagarRecado()` avisam Enter/Esc.
-export function criarAreaTela({ aoEscolher, aoEscreverRecado, aoFecharRecado, aoApagarRecado }) {
+// false se não foi possível enviar; `aoApagarRecado()` avisa o Esc; `aoMoverRecado({ x, y })` leva a
+// posição do cursor de quem escreve.
+export function criarAreaTela({ aoEscolher, aoEscreverRecado, aoApagarRecado, aoMoverRecado }) {
   const elemento = criarElemento("section", { id: "area-tela", hidden: true });
   const aviso = criarElemento("p", {
     className: "aviso-compartilhando",
@@ -52,8 +58,11 @@ export function criarAreaTela({ aoEscolher, aoEscreverRecado, aoFecharRecado, ao
   let videoAtual = null;
   let ultimoPonteiro = null;
   let recadosAtuais = [];
+  // Id → elemento desenhado: reaproveitar o elemento mantém as transições de movimento e de fade.
+  const elementosRecados = new Map();
   let idVoce = null;
-  // Campo aberto: { alvo, x, y, caixa, entrada, contador, enviou, confirmado, prazo } ou null.
+  // Campo aberto: { alvo, x, y, caixa, entrada, contador, enviou, confirmado, prazo, ultimoEnvio,
+  // ultimoEnviado, envioPendente } ou null. `x`/`y` seguem o ponteiro sobre a imagem (T08).
   let campo = null;
 
   // Tela cheia no contêiner (não só no vídeo), para manter a legenda e os recados; Esc é tratado
@@ -68,8 +77,14 @@ export function criarAreaTela({ aoEscolher, aoEscreverRecado, aoFecharRecado, ao
 
   destaque.addEventListener("pointermove", (evento) => {
     ultimoPonteiro = { x: evento.clientX, y: evento.clientY };
+    seguirPonteiro();
   });
   destaque.addEventListener("pointerleave", () => (ultimoPonteiro = null));
+  // Com o campo aberto, clicar na imagem não tira o foco dele (T08 FR-007). É no `mousedown` que o
+  // navegador move o foco; o `click` (botão "Tela cheia") continua funcionando.
+  destaque.addEventListener("mousedown", (evento) => {
+    if (campo !== null && !campo.caixa.contains(evento.target)) evento.preventDefault();
+  });
   document.addEventListener("keydown", aoApertarTecla);
   // O tamanho da imagem na tela muda com a janela, a tela cheia e a resolução recebida (FR-007).
   new ResizeObserver(() => desenharRecados()).observe(destaque);
@@ -133,10 +148,12 @@ export function criarAreaTela({ aoEscolher, aoEscreverRecado, aoFecharRecado, ao
   function mostrarRecados(lista, id) {
     recadosAtuais = lista;
     idVoce = id;
-    const meuAberto = lista.some((r) => r.autor === idVoce && r.aberto);
-    if (campo?.enviou && meuAberto) campo.confirmado = true;
-    // O servidor tirou o recado (8 s sem digitar, ou o compartilhamento acabou): o campo fecha.
-    if (campo?.confirmado && !meuAberto) fecharCampo("descartar");
+    const meuRecado = lista.find((r) => r.autor === idVoce) ?? null;
+    if (campo?.enviou && meuRecado !== null) campo.confirmado = true;
+    // O servidor tirou o recado (fim do prazo, ou o compartilhamento acabou): o campo fecha.
+    if (campo?.confirmado && meuRecado === null) fecharCampo("descartar");
+    // O próprio campo some aos poucos junto com o recado e volta com uma tecla (T08 contracts/ui.md).
+    campo?.caixa.classList.toggle("apagando", meuRecado?.apagando ?? false);
     desenharRecados();
   }
 
@@ -171,13 +188,39 @@ export function criarAreaTela({ aoEscolher, aoEscreverRecado, aoFecharRecado, ao
     // Enquanto o campo está aberto, o próprio texto aparece nele, não repetido como recado.
     const visiveis = recadosAtuais.filter(
       (r) =>
-        r.alvo === idEmDestaque &&
-        r.texto.trim() !== "" &&
-        !(campo !== null && r.autor === idVoce && r.aberto),
+        r.alvo === idEmDestaque && r.texto.trim() !== "" && !(campo !== null && r.autor === idVoce),
     );
-    grupoRecados.replaceChildren(...visiveis.map(criarRecado));
+    const idsVisiveis = new Set(visiveis.map((r) => r.id));
+    for (const [id, elementoRecado] of elementosRecados) {
+      if (idsVisiveis.has(id)) continue;
+      elementoRecado.remove();
+      elementosRecados.delete(id);
+    }
+    const novos = new Set();
+    const elementos = visiveis.map((recado) => {
+      let elementoRecado = elementosRecados.get(recado.id);
+      if (elementoRecado === undefined) {
+        elementoRecado = criarRecado(recado);
+        elementosRecados.set(recado.id, elementoRecado);
+        novos.add(elementoRecado);
+      } else {
+        atualizarTextoRecado(elementoRecado, recado);
+      }
+      elementoRecado.classList.toggle("apagando", recado.apagando);
+      return elementoRecado;
+    });
+    // A ordem da lista é a de desenho: o último fica por cima.
+    substituirFilhosSeMudou(grupoRecados, elementos);
     // Posicionar depois de inseridos: a largura e a altura de cada caixa só existem na página.
-    visiveis.forEach((recado, indice) => posicionar(grupoRecados.children[indice], recado, area));
+    // Um recado que acabou de aparecer nasce no lugar, sem deslizar a partir do canto.
+    visiveis.forEach((recado, indice) => {
+      const elementoRecado = elementos[indice];
+      if (novos.has(elementoRecado)) {
+        semTransicao(elementoRecado, () => posicionar(elementoRecado, recado, area));
+      } else {
+        posicionar(elementoRecado, recado, area);
+      }
+    });
     if (campo !== null) posicionar(campo.caixa, campo, area);
   }
 
@@ -188,8 +231,47 @@ export function criarAreaTela({ aoEscolher, aoEscreverRecado, aoFecharRecado, ao
       { esquerda, topo, largura: caixa.offsetWidth, altura: caixa.offsetHeight },
       area,
     );
-    caixa.style.left = `${encaixada.esquerda}px`;
-    caixa.style.top = `${encaixada.topo}px`;
+    // `transform` (e não left/top) para que a transição de movimento do CSS funcione (T08 research §2).
+    caixa.style.transform = `translate(${encaixada.esquerda}px, ${encaixada.topo}px)`;
+  }
+
+  // O campo acompanha o ponteiro na hora; fora da imagem fica no último ponto (T08 FR-001/FR-004).
+  function seguirPonteiro() {
+    if (campo === null || campo.alvo !== idEmDestaque) return;
+    const ponto = pontoSobAImagem();
+    if (ponto === null) return;
+    campo.x = ponto.x;
+    campo.y = ponto.y;
+    const area = areaAtual();
+    if (area !== null) posicionar(campo.caixa, campo, area);
+    enviarPosicao();
+  }
+
+  // Envia a posição atual no máximo a cada 50 ms; o último ponto de uma sequência nunca se perde,
+  // porque um envio fica agendado para o fim do intervalo (research §1).
+  function enviarPosicao() {
+    if (campo === null || !campo.enviou) return;
+    const ponto = { x: campo.x, y: campo.y };
+    const agora = performance.now();
+    if (devoEnviarPosicao(agora, campo.ultimoEnvio, ponto, campo.ultimoEnviado)) {
+      clearTimeout(campo.envioPendente);
+      campo.envioPendente = null;
+      campo.ultimoEnvio = agora;
+      campo.ultimoEnviado = ponto;
+      aoMoverRecado(ponto);
+      return;
+    }
+    const mesmoPonto =
+      campo.ultimoEnviado !== null &&
+      ponto.x === campo.ultimoEnviado.x &&
+      ponto.y === campo.ultimoEnviado.y;
+    if (mesmoPonto || campo.envioPendente !== null) return;
+    const espera = Math.max(0, INTERVALO_POSICAO_MS - (agora - campo.ultimoEnvio));
+    campo.envioPendente = setTimeout(() => {
+      if (campo === null) return;
+      campo.envioPendente = null;
+      enviarPosicao();
+    }, espera);
   }
 
   function aoApertarTecla(evento) {
@@ -199,14 +281,25 @@ export function criarAreaTela({ aoEscolher, aoEscreverRecado, aoFecharRecado, ao
       return;
     }
     const ponto = pontoSobAImagem();
-    const abrir = deveAbrirCampo(evento, {
+    const acao = acaoDaTecla(evento, {
       alvoEhCampoDeTexto: ehCampoDeTexto(evento.target),
-      temDestaque: idEmDestaque !== null && campo === null,
+      campoAberto: campo !== null,
+      temDestaque: idEmDestaque !== null,
       pontoNaImagem: ponto,
     });
-    if (!abrir) return;
-    evento.preventDefault();
-    abrirCampo(ponto);
+    if (acao === "abrir") {
+      evento.preventDefault();
+      abrirCampo(ponto);
+    } else if (acao === "voltarAoCampo") {
+      // Sem preventDefault: com o foco de volta no campo antes de a tecla ser inserida, o navegador
+      // a escreve no recado, no fim do texto (T08 research §5).
+      const fim = campo.entrada.value.length;
+      campo.entrada.focus();
+      campo.entrada.setSelectionRange(fim, fim);
+    } else if (acao === "apagar") {
+      evento.preventDefault();
+      fecharCampo("apagar");
+    }
   }
 
   function pontoSobAImagem() {
@@ -243,22 +336,24 @@ export function criarAreaTela({ aoEscolher, aoEscreverRecado, aoFecharRecado, ao
       contador,
       enviou: false,
       confirmado: false,
+      ultimoEnvio: null,
+      ultimoEnviado: null,
+      envioPendente: null,
     };
     campo.prazo = setTimeout(() => fecharCampo("descartar"), PRAZO_CAMPO_VAZIO_MS);
 
     entrada.addEventListener("beforeinput", bloquearAcimaDoLimite);
     entrada.addEventListener("input", aoMudarTexto);
     entrada.addEventListener("keydown", (evento) => {
+      // T08: Enter não faz nada; o campo fica aberto enquanto o recado aparece.
       if (evento.key === "Enter") {
         evento.preventDefault();
-        fecharCampo("fechar");
       } else if (evento.key === "Escape") {
         evento.preventDefault();
         fecharCampo("apagar");
       }
     });
-    // Clicar fora ou trocar de aba (ex.: voltar ao jogo): fecha como o Enter, o recado fica.
-    entrada.addEventListener("blur", () => fecharCampo("fechar"));
+    // T08: clicar fora ou trocar de aba não fecha o campo (research §5).
 
     camada.append(caixa);
     desenharRecados();
@@ -315,19 +410,24 @@ export function criarAreaTela({ aoEscolher, aoEscreverRecado, aoFecharRecado, ao
     }
     // Daqui em diante, o prazo de 8 s é controlado pelo servidor.
     clearTimeout(campo.prazo);
+    if (!campo.enviou) {
+      // O primeiro `escrever` cria o recado no ponto atual: conta como a primeira posição enviada.
+      campo.ultimoEnvio = performance.now();
+      campo.ultimoEnviado = { x: campo.x, y: campo.y };
+    }
     campo.enviou = true;
     desenharRecados();
   }
 
-  // `acao`: "fechar" (Enter, clicar fora), "apagar" (Esc) ou "descartar" (sem avisar o servidor).
+  // `acao`: "apagar" (Esc, sair da tela cheia, trocar o destaque) ou "descartar" (sem avisar o
+  // servidor: o recado já sumiu ou não pôde ser enviado).
   function fecharCampo(acao) {
     if (campo === null) return;
     const fechado = campo;
-    // Anular antes de remover: tirar o campo da página dispara `blur`, que não deve agir de novo.
     campo = null;
     clearTimeout(fechado.prazo);
+    clearTimeout(fechado.envioPendente);
     fechado.caixa.remove();
-    if (fechado.enviou && acao === "fechar") aoFecharRecado();
     if (fechado.enviou && acao === "apagar") aoApagarRecado();
     desenharRecados();
   }
@@ -341,6 +441,19 @@ function criarRecado({ nome, texto }) {
     criarElemento("strong", { className: "nome-recado", textContent: nome }),
     criarElemento("span", { className: "texto-recado", textContent: texto.trim() }),
   ]);
+}
+
+function atualizarTextoRecado(elementoRecado, { texto }) {
+  const span = elementoRecado.querySelector(".texto-recado");
+  if (span.textContent !== texto.trim()) span.textContent = texto.trim();
+}
+
+// Aplica uma mudança de estilo sem animar: a transição volta a valer só depois do próximo cálculo.
+function semTransicao(elemento, mudar) {
+  elemento.style.transition = "none";
+  mudar();
+  void elemento.offsetWidth;
+  elemento.style.transition = "";
 }
 
 // Trocar os filhos tira e recoloca cada elemento na página, o que tira o foco do campo de recado:

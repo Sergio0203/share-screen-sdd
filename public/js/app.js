@@ -313,8 +313,9 @@ function mostrarTelaSala(idSala, nome) {
     },
     // Recados (T07, contracts/websocket.md): o texto inteiro vai a cada alteração do campo.
     aoEscreverRecado: (dados) => enviarRecado({ acao: "escrever", ...dados }),
-    aoFecharRecado: () => enviarRecado({ acao: "fechar" }),
     aoApagarRecado: () => enviarRecado({ acao: "apagar" }),
+    // T08: posição do cursor de quem escreve (já limitada a uma a cada 50 ms em area-tela.js).
+    aoMoverRecado: ({ x, y }) => enviarRecado({ acao: "mover", x, y }),
   });
 
   // Com a conexão fechada, o recado não sai: a pessoa fica sabendo (FR-012).

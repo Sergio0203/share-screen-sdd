@@ -7,8 +7,9 @@ import { normalizarTextoRecado, textoRecadoValido } from "../public/js/recados.j
 // O anfitrião é quem tem a chave `chaveAnfitriao`; ela pode passar para outra pessoa.
 // `aoMudar(idSala)` avisa quem usa o registro que a lista de participantes mudou.
 // `conexaoPorId`/`idPorConexao` servem para repassar sinais de voz entre participantes (T03).
-// Recados (T07, specs/007-recado-na-tela/data-model.md): cada um some `duracaoRecadoMs` depois da
-// última tecla; `aoMudarRecados(idSala)` avisa que a lista de recados mudou.
+// Recados (T07, alterados pela T08 — specs/008-recado-segue-cursor/data-model.md): no máximo um por
+// pessoa, vivo enquanto o campo de quem escreve está aberto; some `duracaoRecadoMs` depois da última
+// tecla; `aoMudarRecados(idSala)` avisa que a lista de recados mudou.
 export function criarRegistroSalas({
   toleranciaMs = 60_000,
   capacidade = 6,
@@ -17,6 +18,7 @@ export function criarRegistroSalas({
   cancelar = clearTimeout,
   aoMudar = () => {},
   duracaoRecadoMs = 8000,
+  duracaoFadeMs = 1000,
   aoMudarRecados = () => {},
 } = {}) {
   const salas = new Map();
@@ -69,7 +71,7 @@ export function criarRegistroSalas({
       transferencia: null,
       // Cresce a cada compartilhamento iniciado: define qual é o mais recente (T05).
       contadorCompartilhamentos: 0,
-      // Id → recado ativo, na ordem de criação (o mais recente é desenhado por cima).
+      // Id → recado ativo, na ordem da última tecla (o último é desenhado por cima, T08 FR-010).
       recados: new Map(),
     };
     salas.set(id, sala);
@@ -203,12 +205,9 @@ export function criarRegistroSalas({
 
   // ---------- Recados (T07) ----------
 
-  // Quem saiu (ou recarregou): somem os recados sobre a tela dela e o recado que ela ainda escrevia.
+  // Quem saiu (ou recarregou): somem os recados sobre a tela dela e o recado dela (T08 research §6).
   function removerRecadosDe(sala, idPublico) {
-    removerRecados(
-      sala,
-      (recado) => recado.alvo === idPublico || (recado.autor === idPublico && recado.aberto),
-    );
+    removerRecados(sala, (recado) => recado.alvo === idPublico || recado.autor === idPublico);
   }
 
   function removerRecados(sala, deveSair) {
@@ -222,16 +221,24 @@ export function criarRegistroSalas({
     if (mudou) aoMudarRecados(sala.id);
   }
 
+  // Duas etapas num só temporizador (T08 research §4): `duracaoRecadoMs` depois da última tecla o
+  // recado passa a `apagando` (fade de 1 s em todos os navegadores ao mesmo tempo); `duracaoFadeMs`
+  // depois, sai da lista.
   function reagendarRecado(sala, recado) {
     if (recado.vence !== null) cancelar(recado.vence);
     recado.vence = agendar(() => {
-      sala.recados.delete(recado.id);
+      recado.apagando = true;
+      recado.vence = agendar(() => {
+        sala.recados.delete(recado.id);
+        aoMudarRecados(sala.id);
+      }, duracaoFadeMs);
       aoMudarRecados(sala.id);
     }, duracaoRecadoMs);
   }
 
-  function recadoAbertoDe(sala, idPublico) {
-    return [...sala.recados.values()].find((r) => r.autor === idPublico && r.aberto) ?? null;
+  // Cada pessoa tem no máximo um recado (T08 FR-009).
+  function recadoDe(sala, idPublico) {
+    return [...sala.recados.values()].find((r) => r.autor === idPublico) ?? null;
   }
 
   const fracaoValida = (valor) => Number.isFinite(valor) && valor >= 0 && valor <= 1;
@@ -247,14 +254,14 @@ export function criarRegistroSalas({
     );
     if (!alvoCompartilha) return;
 
-    let recado = recadoAbertoDe(sala, autor.id);
+    let recado = recadoDe(sala, autor.id);
     if (recado !== null && recado.alvo !== alvo) {
       removerRecados(sala, (r) => r === recado);
       recado = null;
     }
     if (recado === null) {
       if (!fracaoValida(x) || !fracaoValida(y)) return;
-      // O nome é copiado agora: o recado fechado continua na tela mesmo se a pessoa sair.
+      // O nome é copiado agora, como na lista de participantes no momento em que o recado nasce.
       recado = {
         id: gerarSegredo(),
         autor: autor.id,
@@ -263,24 +270,28 @@ export function criarRegistroSalas({
         x,
         y,
         texto: "",
-        aberto: true,
+        apagando: false,
         vence: null,
       };
       sala.recados.set(recado.id, recado);
     }
     recado.texto = normalizarTextoRecado(texto);
+    recado.apagando = false;
+    // Reinserir leva o recado ao fim do Map: a lista fica na ordem da última tecla.
+    sala.recados.delete(recado.id);
+    sala.recados.set(recado.id, recado);
     reagendarRecado(sala, recado);
     aoMudarRecados(idSala);
   }
 
-  // Enter, clicar fora ou trocar de aba: o campo fecha e o recado fica até completar o prazo.
-  function fecharRecado(idSala, conexao) {
+  // O cursor de quem escreve se moveu (T08): só o ponto muda; o prazo conta só as teclas (FR-006).
+  function moverRecado(idSala, conexao, { x, y }) {
     const sala = salas.get(idSala);
     const autor = participantePorConexao(idSala, conexao);
-    const recado = sala && autor ? recadoAbertoDe(sala, autor.id) : null;
-    if (recado === null) return;
-    recado.aberto = false;
-    reagendarRecado(sala, recado);
+    const recado = sala && autor ? recadoDe(sala, autor.id) : null;
+    if (recado === null || !fracaoValida(x) || !fracaoValida(y)) return;
+    recado.x = x;
+    recado.y = y;
     aoMudarRecados(idSala);
   }
 
@@ -288,7 +299,7 @@ export function criarRegistroSalas({
   function apagarRecado(idSala, conexao) {
     const sala = salas.get(idSala);
     const autor = participantePorConexao(idSala, conexao);
-    const recado = sala && autor ? recadoAbertoDe(sala, autor.id) : null;
+    const recado = sala && autor ? recadoDe(sala, autor.id) : null;
     if (recado === null) return;
     removerRecados(sala, (r) => r === recado);
   }
@@ -297,7 +308,7 @@ export function criarRegistroSalas({
   function listarRecados(idSala) {
     const sala = salas.get(idSala);
     if (!sala) return null;
-    return [...sala.recados.values()].map(({ id, autor, nome, alvo, x, y, texto, aberto }) => ({
+    return [...sala.recados.values()].map(({ id, autor, nome, alvo, x, y, texto, apagando }) => ({
       id,
       autor,
       nome,
@@ -305,7 +316,7 @@ export function criarRegistroSalas({
       x,
       y,
       texto,
-      aberto,
+      apagando,
     }));
   }
 
@@ -344,7 +355,7 @@ export function criarRegistroSalas({
     conexaoPorId,
     idPorConexao,
     escreverRecado,
-    fecharRecado,
+    moverRecado,
     apagarRecado,
     listarRecados,
   };

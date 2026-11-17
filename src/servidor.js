@@ -115,7 +115,7 @@ function consultarSalaPorHttp(registro, idSala, requisicao, resposta) {
 
 // Contratos: specs/002-entrar-sala-link/contracts/websocket.md e
 // specs/003-conversar-por-voz/contracts/websocket.md (e as extensões até
-// specs/007-recado-na-tela/contracts/websocket.md)
+// specs/007-recado-na-tela/contracts/websocket.md e specs/008-recado-segue-cursor/contracts/websocket.md)
 function atenderConexao(registro, conexao) {
   // Sala em que esta conexão entrou; nula até um `entrar` bem-sucedido.
   let idSalaAtual = null;
@@ -229,8 +229,8 @@ function tratarRecado(registro, idSala, conexao, mensagem) {
   if (acao === "escrever" && formatoDeEscreverValido(mensagem)) {
     const { alvo, x, y, texto } = mensagem;
     registro.escreverRecado(idSala, conexao, { alvo, x, y, texto });
-  } else if (acao === "fechar") {
-    registro.fecharRecado(idSala, conexao);
+  } else if (acao === "mover" && typeof mensagem.x === "number" && typeof mensagem.y === "number") {
+    registro.moverRecado(idSala, conexao, { x: mensagem.x, y: mensagem.y });
   } else if (acao === "apagar") {
     registro.apagarRecado(idSala, conexao);
   } else {
