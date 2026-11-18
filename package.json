@@ -14,6 +14,7 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
+    "livekit-client": "2.24.1",
     "ws": "^8.23.0"
   },
   "devDependencies": {

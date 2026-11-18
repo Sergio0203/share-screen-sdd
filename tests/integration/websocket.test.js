@@ -2,7 +2,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { setTimeout as esperar } from "node:timers/promises";
 import WebSocket from "ws";
-import { subirServidor } from "./auxiliares.js";
+import { conectarCliente, subirServidor } from "./auxiliares.js";
 
 const TOLERANCIA_MS = 100;
 const INTERVALO_PING_MS = 50;
@@ -26,50 +26,9 @@ async function criarSala() {
   return resposta.json();
 }
 
-// Abre uma conexão e enfileira as mensagens recebidas.
-async function conectar(opcoesWs = {}) {
-  const ws = new WebSocket(servidor.urlWs, opcoesWs);
-  const fila = [];
-  const aguardando = [];
-  ws.on("message", (dados) => {
-    const mensagem = JSON.parse(dados.toString());
-    const proximo = aguardando.shift();
-    if (proximo) proximo(mensagem);
-    else fila.push(mensagem);
-  });
-  const fechada = new Promise((resolver) => ws.on("close", resolver));
-  await new Promise((resolver, rejeitar) => {
-    ws.on("open", resolver);
-    ws.on("error", rejeitar);
-  });
-
-  function proxima() {
-    return fila.length
-      ? Promise.resolve(fila.shift())
-      : new Promise((resolver) => aguardando.push(resolver));
-  }
-
-  return {
-    ws,
-    enviar: (dados) => ws.send(typeof dados === "string" ? dados : JSON.stringify(dados)),
-    proxima,
-    // Descarta mensagens até chegar uma do tipo pedido.
-    async esperarTipo(tipo) {
-      for (;;) {
-        const mensagem = await proxima();
-        if (mensagem.tipo === tipo) return mensagem;
-      }
-    },
-    // Espera uma lista de participantes que satisfaça a condição.
-    async esperarLista(condicao) {
-      for (;;) {
-        const { lista } = await this.esperarTipo("participantes");
-        if (condicao(lista)) return lista;
-      }
-    },
-    fechar: () => ws.close(),
-    fechada,
-  };
+// Abre uma conexão e enfileira as mensagens recebidas (cliente em auxiliares.js).
+function conectar(opcoesWs = {}) {
+  return conectarCliente(servidor.urlWs, opcoesWs);
 }
 
 // Conecta e entra; devolve o cliente já com `entrou` lido.
@@ -255,7 +214,16 @@ test("mesma chave conectando de novo substitui a conexão antiga", async () => {
   nova.fechar();
 });
 
-// ---------- Sinal de voz (T03) ----------
+// ---------- Sinal de voz (removido na T10) ----------
+
+// A mídia passa pelo servidor de mídia (T10): não há mais negociação entre navegadores.
+test("sinal depois de entrar deixou de existir e devolve mensagem-invalida", async () => {
+  const { id } = await criarSala();
+  const cliente = await entrarNaSala(id, "Ana");
+  cliente.enviar({ tipo: "sinal", para: "x".repeat(22), dados: {} });
+  assert.equal((await cliente.esperarTipo("erro")).codigo, "mensagem-invalida");
+  await cliente.fechada;
+});
 
 // Ana e Bruno na mesma sala, com as listas iniciais já consumidas.
 async function salaComAnaEBruno() {
@@ -265,69 +233,6 @@ async function salaComAnaEBruno() {
   await ana.esperarLista((l) => l.length === 2);
   await bruno.esperarLista((l) => l.length === 2);
   return { id, ana, bruno };
-}
-
-test("sinal chega só ao destinatário, com o remetente em `de`", async () => {
-  const { ana, bruno } = await salaComAnaEBruno();
-  const dados = { descricao: { type: "offer", sdp: "x" } };
-  ana.enviar({ tipo: "sinal", para: bruno.entrou.voce, dados });
-
-  assert.deepEqual(await bruno.proxima(), { tipo: "sinal", de: ana.entrou.voce, dados });
-  // Ana não recebe nada: a próxima mensagem dela é a lista após o Bruno sair.
-  bruno.fechar();
-  assert.equal((await ana.proxima()).tipo, "participantes");
-  ana.fechar();
-});
-
-test("sinal para id inexistente é ignorado e a conexão continua", async () => {
-  const { ana, bruno } = await salaComAnaEBruno();
-  ana.enviar({ tipo: "sinal", para: "x".repeat(22), dados: {} });
-  ana.enviar({ tipo: "sinal", para: bruno.entrou.voce, dados: { candidato: {} } });
-  assert.equal((await bruno.proxima()).tipo, "sinal");
-  ana.fechar();
-  bruno.fechar();
-});
-
-test("sinal para alguém de outra sala não é entregue", async () => {
-  const { ana, bruno } = await salaComAnaEBruno();
-  const outra = await criarSala();
-  const carla = await entrarNaSala(outra.id, "Carla", outra.chave);
-  await carla.esperarTipo("participantes");
-
-  ana.enviar({ tipo: "sinal", para: carla.entrou.voce, dados: {} });
-  ana.enviar({ tipo: "sinal", para: bruno.entrou.voce, dados: { marca: 1 } });
-  assert.deepEqual((await bruno.proxima()).dados, { marca: 1 });
-
-  carla.enviar({ tipo: "sinal", para: "x".repeat(22), dados: { marca: 2 } });
-  carla.fechar();
-  await carla.fechada;
-  // Se Carla tivesse recebido o sinal da Ana, a fila dela não estaria vazia.
-  assert.equal(await Promise.race([carla.proxima(), esperar(50, "nada")]), "nada");
-  ana.fechar();
-  bruno.fechar();
-});
-
-test("sinal antes de entrar devolve mensagem-invalida", async () => {
-  const cliente = await conectar();
-  cliente.enviar({ tipo: "sinal", para: "x".repeat(22), dados: {} });
-  assert.equal((await cliente.proxima()).codigo, "mensagem-invalida");
-  await cliente.fechada;
-});
-
-for (const [descricao, campos] of [
-  ["para não texto", { para: 1, dados: {} }],
-  ["dados ausentes", { para: "x" }],
-  ["dados nulos", { para: "x", dados: null }],
-  ["dados em lista", { para: "x", dados: [] }],
-  ["dados texto", { para: "x", dados: "oi" }],
-]) {
-  test(`sinal com ${descricao} devolve mensagem-invalida`, async () => {
-    const { id } = await criarSala();
-    const cliente = await entrarNaSala(id, "Ana");
-    cliente.enviar({ tipo: "sinal", ...campos });
-    assert.equal((await cliente.esperarTipo("erro")).codigo, "mensagem-invalida");
-    await cliente.fechada;
-  });
 }
 
 // ---------- Estado do microfone (T03) ----------

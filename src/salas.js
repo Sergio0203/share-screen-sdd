@@ -6,10 +6,11 @@ import { normalizarTextoRecado, textoRecadoValido } from "../public/js/recados.j
 // Ciclo de vida da sala: criada vazia → com participantes → vazia por `toleranciaMs` → expirada.
 // O anfitrião é quem tem a chave `chaveAnfitriao`; ela pode passar para outra pessoa.
 // `aoMudar(idSala)` avisa quem usa o registro que a lista de participantes mudou.
-// `conexaoPorId`/`idPorConexao` servem para repassar sinais de voz entre participantes (T03).
 // Recados (T07, alterados pela T08 — specs/008-recado-segue-cursor/data-model.md): no máximo um por
 // pessoa, vivo enquanto o campo de quem escreve está aberto; some `duracaoRecadoMs` depois da última
 // tecla; `aoMudarRecados(idSala)` avisa que a lista de recados mudou.
+// `aoSair(idSala, idPublico)` avisa que um id público deixou a sala (saiu, caiu ou foi substituído
+// por outra aba), para tirá-lo também do servidor de mídia (T10 research §4).
 export function criarRegistroSalas({
   toleranciaMs = 60_000,
   capacidade = 6,
@@ -20,6 +21,7 @@ export function criarRegistroSalas({
   duracaoRecadoMs = 8000,
   duracaoFadeMs = 1000,
   aoMudarRecados = () => {},
+  aoSair = () => {},
 } = {}) {
   const salas = new Map();
 
@@ -95,6 +97,8 @@ export function criarRegistroSalas({
       removerRecadosDe(salas.get(idSala), existente.id);
       existente.conexao = conexao;
       existente.nome = nomeNormalizado;
+      // O id antigo deixa de valer, inclusive no servidor de mídia.
+      aoSair(idSala, existente.id);
       // Id público novo: a página nova não tem as conexões de voz antigas, e quem vê o id antigo
       // sumir e o novo aparecer refaz a conexão sozinho (T03, research §5).
       existente.id = gerarSegredo();
@@ -138,6 +142,7 @@ export function criarRegistroSalas({
 
     sala.participantes.delete(participante.chave);
     removerRecadosDe(sala, participante.id);
+    aoSair(idSala, participante.id);
     if (sala.participantes.size === 0) agendarExpiracao(sala);
     reavaliarAnfitriao(sala);
     aoMudar(idSala);
@@ -326,14 +331,18 @@ export function criarRegistroSalas({
     return [...sala.participantes.values()].find((p) => p.conexao === conexao) ?? null;
   }
 
-  function conexaoPorId(idSala, idPublico) {
+  // O id público está na sala agora? (aviso de entrada no servidor de mídia, T10)
+  function participanteNaSala(idSala, idPublico) {
     const sala = salas.get(idSala);
-    if (!sala) return null;
-    return [...sala.participantes.values()].find((p) => p.id === idPublico)?.conexao ?? null;
+    if (!sala) return false;
+    return [...sala.participantes.values()].some((p) => p.id === idPublico);
   }
 
-  function idPorConexao(idSala, conexao) {
-    return participantePorConexao(idSala, conexao)?.id ?? null;
+  // Id público e nome atuais de quem usa a conexão; null se ela já foi substituída por outra aba.
+  // Usado para emitir a permissão de mídia (T10).
+  function participantePublicoPorConexao(idSala, conexao) {
+    const participante = participantePorConexao(idSala, conexao);
+    return participante && { id: participante.id, nome: participante.nome };
   }
 
   function conexoes(idSala) {
@@ -352,8 +361,8 @@ export function criarRegistroSalas({
     definirCamera,
     definirTela,
     definirAssistindo,
-    conexaoPorId,
-    idPorConexao,
+    participantePublicoPorConexao,
+    participanteNaSala,
     escreverRecado,
     moverRecado,
     apagarRecado,

@@ -97,4 +97,6 @@ export const TEXTOS = {
   abertaEmOutraAba: "Esta sala foi aberta em outra aba.",
   erroVerificarSala: "Não foi possível abrir a sala. Verifique sua conexão e tente novamente.",
   conexaoPerdida: "Você perdeu a conexão com a sala. Recarregue a página para tentar de novo.",
+  // T10: o servidor de mídia caiu ou não responde; a sala continua e o app tenta de novo sozinho.
+  midiaIndisponivel: "Não foi possível conectar voz, câmera e tela. Tentando de novo…",
 };

@@ -18,19 +18,49 @@ antes disso o mantém; Esc apaga na hora). Cada pessoa tem um recado por vez. Qu
 tela na sala e pode escrever sobre ela.
 Compartilhar exige Chrome, Edge ou Firefox de computador; pelo celular, dá para assistir.
 
+Voz, câmera e tela passam por um servidor de mídia ([LiveKit](https://livekit.io), código aberto),
+que repassa para os outros: cada pessoa envia uma cópia só de cada coisa, por maior que seja a sala.
+Se o servidor de mídia cair, a sala continua (lista e recados) e a mídia volta sozinha quando ele
+voltar.
+
 Microfone, câmera e compartilhamento só funcionam quando o app é aberto por `https://` ou em
 `http://localhost`.
 
 ## Pré-requisitos
 
 - Node.js 22 ou mais recente
+- Docker (para o servidor de mídia)
 
 ## Como rodar
 
 ```bash
 npm install
+
+# Terminal 1: servidor de mídia de desenvolvimento (chave "devkey", segredo "secret")
+docker run --rm -p 7880:7880 -p 7881:7881 -p 7882:7882/udp \
+  livekit/livekit-server:v1.13.11 --dev --bind 0.0.0.0 --node-ip 127.0.0.1
+
+# Terminal 2: o app
 npm start          # http://localhost:3000 (mude a porta com PORT=4000 npm start)
 ```
+
+Sem as variáveis `LIVEKIT_URL`, `LIVEKIT_API_URL`, `LIVEKIT_API_KEY` e `LIVEKIT_API_SECRET`, o app
+usa esse servidor de desenvolvimento.
+
+## Implantação
+
+Num servidor Linux com Docker e um domínio próprio:
+
+1. DNS: o domínio (ex.: `telao.exemplo.com`) e `turn.` + domínio (ex.: `turn.telao.exemplo.com`)
+   apontando para o servidor.
+2. Portas liberadas: 80/tcp e 443/tcp (site e certificado), 7881/tcp e 7882/udp (mídia).
+3. Copie `.env.exemplo` para `.env` e preencha `DOMINIO`, `LIVEKIT_API_KEY` e `LIVEKIT_API_SECRET`
+   (gere o segredo com `openssl rand -base64 32`). O `.env` não vai para o repositório.
+4. `docker compose up -d`.
+
+O Caddy obtém o certificado HTTPS sozinho e divide a porta 443 entre o site e o servidor de mídia,
+para a voz e o vídeo funcionarem também em redes que só liberam navegação (empresa, faculdade). Cada
+sala cheia (6 pessoas, tela em 1080p e 6 câmeras) usa cerca de 60 Mbit/s de saída no servidor.
 
 ## Desenvolvimento
 

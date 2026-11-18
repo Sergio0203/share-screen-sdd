@@ -1,0 +1,28 @@
+# Porta 443 compartilhada entre o site e o TURN/TLS do servidor de mídia (T10 FR-011,
+# specs/010-midia-por-servidor/research.md §10). O módulo de camada 4 (imagem livekit/caddyl4) olha o
+# nome pedido na conexão TLS (SNI):
+#   turn.<domínio> → Caddy abre o TLS e repassa ao TURN do LiveKit (redes que só liberam HTTPS);
+#   o resto        → segue intacto para o servidor HTTPS do próprio Caddy na porta interna 8443.
+{
+	layer4 {
+		:443 {
+			@turn tls sni turn.{$DOMINIO}
+			route @turn {
+				tls
+				proxy livekit:5349
+			}
+			route {
+				proxy 127.0.0.1:8443
+			}
+		}
+	}
+}
+
+# Certificados automáticos (Let's Encrypt) para os dois nomes; o desafio usa a porta 80.
+https://{$DOMINIO}:8443, https://turn.{$DOMINIO}:8443 {
+	# Sinalização do servidor de mídia (o navegador conecta em wss://<domínio>/rtc).
+	@midia path /rtc /rtc/*
+	reverse_proxy @midia livekit:7880
+
+	reverse_proxy app:3000
+}

@@ -45,6 +45,19 @@ test("GET de arquivo JavaScript devolve o tipo de conteúdo correto", async () =
   assert.match(resposta.headers.get("content-type"), /javascript/);
 });
 
+test("GET /js/livekit-client.js devolve a biblioteca do servidor de mídia (T10)", async () => {
+  const resposta = await fetch(`${servidor.url}/js/livekit-client.js`);
+  assert.equal(resposta.status, 200);
+  assert.match(resposta.headers.get("content-type"), /javascript/);
+  assert.match(await resposta.text(), /class Room /);
+});
+
+test("nenhum outro arquivo de node_modules fica acessível", async () => {
+  assert.equal(await getCru(servidor.url, "/js/../node_modules/ws/package.json"), 404);
+  assert.equal(await getCru(servidor.url, "/node_modules/livekit-client/package.json"), 404);
+  assert.equal((await fetch(`${servidor.url}/js/livekit-client.esm.mjs`)).status, 404);
+});
+
 test("caminho que sai de public/ devolve 404", async () => {
   assert.equal(await getCru(servidor.url, "/%2e%2e/package.json"), 404);
   assert.equal(await getCru(servidor.url, "/../package.json"), 404);

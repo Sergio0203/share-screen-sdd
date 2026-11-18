@@ -1,0 +1,27 @@
+# Servidor de mídia (LiveKit) da T10: specs/010-midia-por-servidor/contracts/livekit.md.
+# Domínio do TURN, chaves e chave dos avisos vêm do ambiente (docker-compose.yml + .env):
+# LIVEKIT_TURN_DOMAIN, LIVEKIT_KEYS e LIVEKIT_WEBHOOK_API_KEY.
+port: 7880
+log_level: info
+
+rtc:
+  # Caminhos de mídia, do melhor ao pior: UDP 7882, TCP 7881, TURN/TLS na 443 (via Caddy).
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: true
+
+turn:
+  enabled: true
+  # O Caddy abre o TLS na 443 e repassa para cá; o LiveKit anuncia turns:<domínio>:443.
+  tls_port: 5349
+  external_tls: true
+
+room:
+  # Mesmo limite da sala do app (T02).
+  max_participants: 6
+  empty_timeout: 60
+
+webhook:
+  # Cada entrada na mídia é conferida pelo app (quem não está na sala é tirado).
+  urls:
+    - http://app:3000/api/livekit/eventos

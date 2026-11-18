@@ -7,6 +7,7 @@ import { mostrarQuadros } from "./area-videos.js";
 import { escolherDestaque } from "./destaque.js";
 import { criarAreaTela } from "./area-tela.js";
 import { criarMidia } from "./midia.js";
+import { Room } from "./livekit-client.js";
 import { QUALIDADES, descreverQualidadeAtiva, qualidadePorId } from "./qualidades.js";
 import { classificarErroCaptura, classificarErroCompartilhamento } from "./midia-regras.js";
 import { criarIcone } from "./icones.js";
@@ -382,8 +383,9 @@ function mostrarTelaSala(idSala, nome) {
     return enviado;
   }
 
-  // Pessoas com quem a conexão de voz e vídeo falhou, a última lista recebida e o próprio id.
-  const paresSemConexao = new Set();
+  // Pessoas cuja voz ou vídeo não chegou (assinatura no servidor de mídia falhou), a última lista
+  // recebida e o próprio id.
+  const pessoasSemMidia = new Set();
   let ultimaLista = [];
   let idProprio = null;
   let avisoSemVoz = null;
@@ -396,7 +398,7 @@ function mostrarTelaSala(idSala, nome) {
 
   // Avisa de quem não dá para ouvir; só importa enquanto essa pessoa está com o microfone ligado.
   function atualizarAvisoSemVoz() {
-    const inaudivel = ultimaLista.find((p) => paresSemConexao.has(p.id) && p.microfone);
+    const inaudivel = ultimaLista.find((p) => pessoasSemMidia.has(p.id) && p.microfone);
     if (inaudivel) {
       avisoSemVoz = TEXTOS.naoFoiPossivelOuvir(inaudivel.nome);
       mostrarMensagem(avisoSemVoz);
@@ -407,23 +409,23 @@ function mostrarTelaSala(idSala, nome) {
   }
 
   function atualizarVideos() {
-    mostrarQuadros(areaVideos, quadrosDeVideo(ultimaLista, idProprio, paresSemConexao), midia);
+    mostrarQuadros(areaVideos, quadrosDeVideo(ultimaLista, idProprio, pessoasSemMidia), midia);
     atualizarTela();
   }
 
-  // Calcula o destaque, mostra a área da tela e avisa o servidor quando o destaque muda: quem
-  // compartilha só envia a tela para quem está assistindo (FR-017).
+  // Calcula o destaque, mostra a área da tela e avisa o servidor quando o destaque muda: a lista
+  // volta com o próprio `assistindo`, e a mídia passa a receber só aquela tela (T10 research §6).
   function atualizarTela() {
     // A escolha vale enquanto aquele compartilhamento existir; depois, volta ao mais recente.
     const escolhaAindaCompartilha = ultimaLista.some((p) => p.id === escolha && p.tela);
     if (!escolhaAindaCompartilha) escolha = null;
-    // Só o compartilhamento em destaque é enviado a esta pessoa, então só o som dele toca (FR-019).
+    // Só o compartilhamento em destaque é recebido por esta pessoa, então só o som dele toca (FR-019).
     const estado = escolherDestaque(ultimaLista, idProprio, escolha);
     const ativa = midia.qualidadeAtiva();
     const qualidade = ativa && descreverQualidadeAtiva(ativa.qualidade, ativa);
     areaTela.atualizar(
       { ...estado, compartilhando, qualidade },
-      { telaDe: midia.telaDe, idsComFalha: paresSemConexao },
+      { telaDe: midia.telaDe, idsComFalha: pessoasSemMidia },
     );
     const assistindo = estado.destaque?.id ?? null;
     if (idProprio !== null && assistindo !== assistindoEnviado) {
@@ -438,10 +440,12 @@ function mostrarTelaSala(idSala, nome) {
   const botaoSom = criarBotaoComTexto(TEXTOS.ativarSom, "som", { classe: "principal ativar-som" });
   botaoSom.hidden = true;
   const midia = criarMidia({
-    enviarSinal: (para, dados) => sala.enviar({ tipo: "sinal", para, dados }),
+    criarSala: (opcoes) => new Room(opcoes),
+    pedirPermissao: () => sala.enviar({ tipo: "pedir-midia" }),
+    aoMudarEstadoMidia: mostrarEstadoMidia,
     aoMudarSomBloqueado: (bloqueado) => (botaoSom.hidden = !bloqueado),
-    aoFalharPar(id) {
-      paresSemConexao.add(id);
+    aoFalharRecepcao(id) {
+      pessoasSemMidia.add(id);
       atualizarAvisoSemVoz();
       atualizarVideos();
     },
@@ -499,6 +503,15 @@ function mostrarTelaSala(idSala, nome) {
     seletorQualidade.disabled = false;
     atualizarTela();
   });
+  // Sem o servidor de mídia, nada liga; o que está ligado ainda desliga (T10 contracts/ui.md).
+  function mostrarEstadoMidia(estado) {
+    for (const controle of [microfone, camera, tela])
+      controle.bloquearLigar(estado !== "conectada");
+    // Entre as tentativas ("conectando") a mensagem continua: só some quando a mídia volta.
+    if (estado === "indisponivel") mostrarMensagem(TEXTOS.midiaIndisponivel);
+    if (estado === "conectada") limparMensagemSeFor(TEXTOS.midiaIndisponivel);
+  }
+
   const tela = criarBotaoDispositivo(TELA, {
     classe: "compartilhar",
     ligar: async () => {
@@ -529,6 +542,8 @@ function mostrarTelaSala(idSala, nome) {
   ]);
   barraControles.setAttribute("aria-label", TEXTOS.tituloSala);
   if (!podeCompartilhar) tela.desabilitar();
+  // Até a primeira conexão com o servidor de mídia (normalmente < 1 s), nada liga.
+  mostrarEstadoMidia("conectando");
 
   // Áreas da sala (T09 contracts/ui.md "Sala — áreas"): topo, palco com a tela compartilhada e, ao
   // lado (ou abaixo, em janelas estreitas), câmeras e participantes.
@@ -597,7 +612,8 @@ function mostrarTelaSala(idSala, nome) {
       atualizarAvisoSemVoz();
       atualizarVideos();
     },
-    aoReceberSinal: (de, dados) => midia.receberSinal(de, dados),
+    // Permissão para o servidor de mídia: chega ao entrar e a cada pedido (T10).
+    aoReceberMidia: ({ url, token }) => midia.conectar(url, token).catch(() => {}),
     aoReceberRecados(lista) {
       ultimosRecados = lista;
       areaTela.mostrarRecados(lista, idProprio);
@@ -641,6 +657,8 @@ function criarBotaoDispositivo(textos, { classe, ligar, desligar, aoMudar }) {
   let ligado = false;
   let mensagemDeErro = null;
   let indisponivel = false;
+  // Servidor de mídia fora do ar (T10): não liga, mas o que está ligado ainda pode ser desligado.
+  let ligarBloqueado = false;
 
   function mostrarErro(texto) {
     mensagemDeErro = texto;
@@ -648,7 +666,7 @@ function criarBotaoDispositivo(textos, { classe, ligar, desligar, aoMudar }) {
   }
 
   function mostrarEstado() {
-    botao.disabled = indisponivel;
+    botao.disabled = indisponivel || (ligarBloqueado && !ligado);
     botao.classList.remove("carregando");
     botao.replaceChildren(criarIcone(ligado ? textos.icones.ligado : textos.icones.desligado));
     botao.setAttribute("aria-label", ligado ? textos.desligar : textos.ligar);
@@ -689,6 +707,11 @@ function criarBotaoDispositivo(textos, { classe, ligar, desligar, aoMudar }) {
     desabilitar() {
       indisponivel = true;
       mostrarEstado();
+    },
+    bloquearLigar(bloquear) {
+      ligarBloqueado = bloquear;
+      // Enquanto o navegador pergunta, o botão já está desabilitado e volta ao estado no fim.
+      if (!botao.classList.contains("carregando")) mostrarEstado();
     },
     // O dispositivo parou sozinho (desconectado ou permissão retirada durante o uso).
     marcarDesconectado() {
@@ -754,7 +777,7 @@ function mostrarAviso(texto) {
 
 // ---------- Conexão com a sala (contracts/websocket.md) ----------
 
-function conectar(idSala, nome, { aoReceberLista, aoReceberSinal, aoReceberRecados }) {
+function conectar(idSala, nome, { aoReceberLista, aoReceberMidia, aoReceberRecados }) {
   const protocolo = location.protocol === "https:" ? "wss:" : "ws:";
   const conexao = new WebSocket(`${protocolo}//${location.host}/ws`);
   conexaoAtual = conexao;
@@ -773,8 +796,8 @@ function conectar(idSala, nome, { aoReceberLista, aoReceberSinal, aoReceberRecad
       salvarArmazenado(chaveDaSala(idSala), mensagem.chave);
     } else if (mensagem.tipo === "participantes") {
       aoReceberLista(mensagem.lista, idVoce);
-    } else if (mensagem.tipo === "sinal") {
-      aoReceberSinal(mensagem.de, mensagem.dados);
+    } else if (mensagem.tipo === "midia") {
+      aoReceberMidia(mensagem);
     } else if (mensagem.tipo === "recados") {
       aoReceberRecados(mensagem.lista);
     } else if (mensagem.tipo === "erro") {

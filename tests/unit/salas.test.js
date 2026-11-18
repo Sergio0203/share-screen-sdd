@@ -218,30 +218,72 @@ test("primeira entrada não tem conexão substituída", () => {
   assert.equal(entrar(registro, id, "Ana").conexaoSubstituida, null);
 });
 
-// ---------- Busca por id público e por conexão (T03) ----------
+// ---------- Quem usa uma conexão (T10) ----------
 
-test("conexaoPorId devolve a conexão do participante ou null", () => {
+test("participantePublicoPorConexao devolve id e nome atuais, ou null", () => {
   const { registro } = novoRegistro();
   const { id, chave } = registro.criar();
   const ana = entrar(registro, id, "Ana", chave);
-  assert.equal(registro.conexaoPorId(id, ana.participante.id), ana.conexao);
-  assert.equal(registro.conexaoPorId(id, "x".repeat(22)), null);
-  assert.equal(registro.conexaoPorId("y".repeat(22), ana.participante.id), null);
-
-  entrar(registro, id, "Ana", chave);
-  assert.equal(registro.conexaoPorId(id, ana.participante.id), null, "id antigo some");
-});
-
-test("idPorConexao devolve o id público ou null", () => {
-  const { registro } = novoRegistro();
-  const { id, chave } = registro.criar();
-  const ana = entrar(registro, id, "Ana", chave);
-  assert.equal(registro.idPorConexao(id, ana.conexao), ana.participante.id);
-  assert.equal(registro.idPorConexao(id, {}), null);
+  assert.deepEqual(registro.participantePublicoPorConexao(id, ana.conexao), {
+    id: ana.participante.id,
+    nome: "Ana",
+  });
+  assert.equal(registro.participantePublicoPorConexao(id, {}), null);
+  assert.equal(registro.participantePublicoPorConexao("y".repeat(22), ana.conexao), null);
 
   const nova = entrar(registro, id, "Ana", chave);
-  assert.equal(registro.idPorConexao(id, ana.conexao), null, "conexão substituída");
-  assert.equal(registro.idPorConexao(id, nova.conexao), nova.participante.id);
+  assert.equal(registro.participantePublicoPorConexao(id, ana.conexao), null, "substituída");
+  assert.equal(registro.participantePublicoPorConexao(id, nova.conexao).id, nova.participante.id);
+});
+
+// ---------- Saída avisada ao servidor de mídia (T10 US2) ----------
+
+function registroComSaidas() {
+  const saidas = [];
+  const contexto = novoRegistro({
+    aoSair: (idSala, idPublico) => saidas.push([idSala, idPublico]),
+  });
+  return { ...contexto, saidas };
+}
+
+test("aoSair avisa a sala e o id público de quem sai", () => {
+  const { registro, saidas } = registroComSaidas();
+  const { id, chave } = registro.criar();
+  const ana = entrar(registro, id, "Ana", chave);
+  const bruno = entrar(registro, id, "Bruno");
+  registro.sair(id, bruno.conexao);
+  assert.deepEqual(saidas, [[id, bruno.participante.id]]);
+  registro.sair(id, ana.conexao);
+  assert.deepEqual(saidas.at(-1), [id, ana.participante.id]);
+});
+
+test("outra aba com a mesma chave avisa a saída do id antigo, e a aba antiga fechando não avisa", () => {
+  const { registro, saidas } = registroComSaidas();
+  const { id, chave } = registro.criar();
+  const antiga = entrar(registro, id, "Ana", chave);
+  const nova = entrar(registro, id, "Ana", chave);
+  assert.deepEqual(saidas, [[id, antiga.participante.id]]);
+  registro.sair(id, antiga.conexao);
+  assert.deepEqual(saidas, [[id, antiga.participante.id]], "a pessoa continua na sala");
+  registro.sair(id, nova.conexao);
+  assert.deepEqual(saidas.at(-1), [id, nova.participante.id]);
+});
+
+test("participanteNaSala só reconhece ids públicos atuais daquela sala", () => {
+  const { registro } = novoRegistro();
+  const salaA = registro.criar();
+  const salaB = registro.criar();
+  const ana = entrar(registro, salaA.id, "Ana", salaA.chave);
+  assert.equal(registro.participanteNaSala(salaA.id, ana.participante.id), true);
+  assert.equal(registro.participanteNaSala(salaB.id, ana.participante.id), false, "outra sala");
+  assert.equal(registro.participanteNaSala("x".repeat(22), ana.participante.id), false);
+  assert.equal(registro.participanteNaSala(salaA.id, "y".repeat(22)), false);
+
+  const nova = entrar(registro, salaA.id, "Ana", salaA.chave);
+  assert.equal(registro.participanteNaSala(salaA.id, ana.participante.id), false, "id antigo");
+  assert.equal(registro.participanteNaSala(salaA.id, nova.participante.id), true);
+  registro.sair(salaA.id, nova.conexao);
+  assert.equal(registro.participanteNaSala(salaA.id, nova.participante.id), false, "saiu");
 });
 
 // ---------- Estado do microfone (T03) ----------

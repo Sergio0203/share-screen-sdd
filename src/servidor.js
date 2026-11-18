@@ -4,9 +4,20 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { idValido } from "./ids.js";
+import { lerConfiguracaoLivekit, removerDaMidia } from "./livekit.js";
+import { criarPermissaoMidia, verificarAvisoLivekit } from "./permissao-midia.js";
 import { criarRegistroSalas } from "./salas.js";
 
 const PASTA_PUBLICA = fileURLToPath(new URL("../public/", import.meta.url));
+
+// Biblioteca do servidor de mídia: um módulo ES único, sem dependências, servido direto do pacote
+// instalado (T10 research §2). É o único arquivo de node_modules acessível.
+const CAMINHO_LIVEKIT_CLIENT = "/js/livekit-client.js";
+// Avisos (webhooks) do servidor de mídia (T10 research §4, contracts/livekit.md).
+const CAMINHO_AVISOS_LIVEKIT = "/api/livekit/eventos";
+const ARQUIVO_LIVEKIT_CLIENT = fileURLToPath(
+  new URL("../node_modules/livekit-client/dist/livekit-client.esm.mjs", import.meta.url),
+);
 
 const TAMANHO_MAXIMO_MENSAGEM = 64 * 1024;
 
@@ -18,12 +29,19 @@ const TIPOS_DE_CONTEUDO = {
 
 // `opcoes` é repassado ao registro de salas (ex.: `toleranciaMs` menor nos testes).
 // `intervaloPingMs`: de quanto em quanto tempo verificar se cada conexão continua viva.
-export function criarServidor({ intervaloPingMs = 1000, ...opcoesRegistro } = {}) {
+// `livekit`: endereço e chaves do servidor de mídia (T10); os testes injetam valores próprios.
+export function criarServidor({
+  intervaloPingMs = 1000,
+  livekit = lerConfiguracaoLivekit(),
+  ...opcoesRegistro
+} = {}) {
   const registro = criarRegistroSalas({
     ...opcoesRegistro,
     // Adiado para depois do código atual, para que quem entrou receba `entrou` antes da lista.
     aoMudar: (idSala) => queueMicrotask(() => enviarLista(registro, idSala)),
     aoMudarRecados: (idSala) => queueMicrotask(() => enviarRecados(registro, idSala)),
+    // Quem deixa a sala também deixa o servidor de mídia (T10 FR-006).
+    aoSair: (idSala, idPublico) => removerDaMidia(livekit, idSala, idPublico),
   });
 
   const servidor = http.createServer(async (requisicao, resposta) => {
@@ -34,8 +52,18 @@ export function criarServidor({ intervaloPingMs = 1000, ...opcoesRegistro } = {}
       return;
     }
 
+    if (pathname === CAMINHO_AVISOS_LIVEKIT) {
+      receberAvisoLivekit(registro, livekit, requisicao, resposta);
+      return;
+    }
+
     if (pathname.startsWith("/api/salas/")) {
       consultarSalaPorHttp(registro, pathname.slice("/api/salas/".length), requisicao, resposta);
+      return;
+    }
+
+    if (requisicao.method === "GET" && pathname === CAMINHO_LIVEKIT_CLIENT) {
+      await servirArquivo(ARQUIVO_LIVEKIT_CLIENT, TIPOS_DE_CONTEUDO[".js"], resposta);
       return;
     }
 
@@ -47,9 +75,9 @@ export function criarServidor({ intervaloPingMs = 1000, ...opcoesRegistro } = {}
     responderNaoEncontrado(resposta);
   });
 
-  // Mensagens de sinal de voz têm poucos KB; o limite protege o servidor de mensagens enormes.
+  // Mensagens da sala têm poucos KB; o limite protege o servidor de mensagens enormes.
   const servidorWs = new WebSocketServer({ noServer: true, maxPayload: TAMANHO_MAXIMO_MENSAGEM });
-  servidorWs.on("connection", (conexao) => atenderConexao(registro, conexao));
+  servidorWs.on("connection", (conexao) => atenderConexao(registro, livekit, conexao));
 
   servidor.on("upgrade", (requisicao, socket, cabecalho) => {
     const { pathname } = new URL(requisicao.url, "http://localhost");
@@ -99,6 +127,53 @@ function criarSalaPorHttp(registro, requisicao, resposta) {
   }
 }
 
+// Aviso do servidor de mídia: quem entrou na mídia de uma sala sem estar nela pelo app (ex.: com a
+// permissão de quem já saiu) é tirado na hora (T10 research §4, contracts/livekit.md).
+function receberAvisoLivekit(registro, livekit, requisicao, resposta) {
+  if (requisicao.method !== "POST") {
+    responderJson(resposta, 405, { erro: "Método não permitido." });
+    return;
+  }
+  lerCorpo(requisicao, TAMANHO_MAXIMO_MENSAGEM).then((corpo) => {
+    if (corpo === null || lerJson(corpo) === null) {
+      responderJson(resposta, 400, { erro: "Aviso inválido." });
+      return;
+    }
+    const aviso = verificarAvisoLivekit({
+      corpo,
+      autorizacao: requisicao.headers.authorization,
+      chave: livekit.chave,
+      segredo: livekit.segredo,
+    });
+    if (aviso === null) {
+      responderJson(resposta, 401, { erro: "Aviso não autorizado." });
+      return;
+    }
+    const idSala = aviso.room?.name;
+    const idPublico = aviso.participant?.identity;
+    const intruso =
+      aviso.event === "participant_joined" && !registro.participanteNaSala(idSala, idPublico);
+    if (intruso) removerDaMidia(livekit, idSala, idPublico);
+    responderJson(resposta, 200, {});
+  });
+}
+
+// Lê o corpo da requisição como texto; null se passar de `limite` bytes.
+function lerCorpo(requisicao, limite) {
+  return new Promise((resolver) => {
+    const partes = [];
+    let tamanho = 0;
+    requisicao.on("data", (parte) => {
+      tamanho += parte.length;
+      if (tamanho <= limite) partes.push(parte);
+    });
+    requisicao.on("end", () =>
+      resolver(tamanho > limite ? null : Buffer.concat(partes).toString("utf8")),
+    );
+    requisicao.on("error", () => resolver(null));
+  });
+}
+
 // Consulta antes da tela de nome: a sala existe? tem vaga? (contracts/http.md)
 function consultarSalaPorHttp(registro, idSala, requisicao, resposta) {
   if (requisicao.method !== "GET") {
@@ -115,8 +190,9 @@ function consultarSalaPorHttp(registro, idSala, requisicao, resposta) {
 
 // Contratos: specs/002-entrar-sala-link/contracts/websocket.md e
 // specs/003-conversar-por-voz/contracts/websocket.md (e as extensões até
-// specs/007-recado-na-tela/contracts/websocket.md e specs/008-recado-segue-cursor/contracts/websocket.md)
-function atenderConexao(registro, conexao) {
+// specs/007-recado-na-tela/contracts/websocket.md, specs/008-recado-segue-cursor/contracts/websocket.md
+// e specs/010-midia-por-servidor/contracts/websocket.md)
+function atenderConexao(registro, livekit, conexao) {
   // Sala em que esta conexão entrou; nula até um `entrar` bem-sucedido.
   let idSalaAtual = null;
   conexao.vivo = true;
@@ -130,7 +206,14 @@ function atenderConexao(registro, conexao) {
     const jaEntrou = idSalaAtual !== null;
 
     if (mensagem?.tipo === "entrar" && !jaEntrou) {
-      if (tratarEntrar(registro, conexao, mensagem)) idSalaAtual = mensagem.idSala;
+      if (tratarEntrar(registro, conexao, mensagem)) {
+        idSalaAtual = mensagem.idSala;
+        enviarPermissaoMidia(registro, livekit, idSalaAtual, conexao);
+      }
+      return;
+    }
+    if (mensagem?.tipo === "pedir-midia" && jaEntrou) {
+      enviarPermissaoMidia(registro, livekit, idSalaAtual, conexao);
       return;
     }
     if (mensagem?.tipo === "microfone" && jaEntrou) {
@@ -151,10 +234,6 @@ function atenderConexao(registro, conexao) {
     }
     if (mensagem?.tipo === "recado" && jaEntrou) {
       tratarRecado(registro, idSalaAtual, conexao, mensagem);
-      return;
-    }
-    if (mensagem?.tipo === "sinal" && jaEntrou) {
-      tratarSinal(registro, idSalaAtual, conexao, mensagem);
       return;
     }
     recusar(conexao, "mensagem-invalida");
@@ -182,6 +261,21 @@ function tratarEntrar(registro, conexao, { idSala, nome, chave }) {
   const recados = registro.listarRecados(idSala);
   if (recados.length > 0) enviar(conexao, { tipo: "recados", lista: recados });
   return true;
+}
+
+// Permissão para conectar ao servidor de mídia, só desta sala e desta pessoa (T10 research §3).
+// Uma conexão já substituída por outra aba não recebe mais nada.
+function enviarPermissaoMidia(registro, livekit, idSala, conexao) {
+  const participante = registro.participantePublicoPorConexao(idSala, conexao);
+  if (participante === null) return;
+  const token = criarPermissaoMidia({
+    chave: livekit.chave,
+    segredo: livekit.segredo,
+    idSala,
+    idPublico: participante.id,
+    nome: participante.nome,
+  });
+  enviar(conexao, { tipo: "midia", url: livekit.url, token });
 }
 
 // O estado do microfone vai para todos na lista de participantes (enviada em `aoMudar`).
@@ -213,7 +307,7 @@ function tratarTela(registro, idSala, conexao, { compartilhando, som }) {
   registro.definirTela(idSala, conexao, { compartilhando, som });
 }
 
-// Qual compartilhamento a pessoa tem em destaque: quem compartilha só envia a tela para ela.
+// Qual compartilhamento a pessoa tem em destaque: a mídia dela passa a receber só essa tela (T10).
 function tratarAssistindo(registro, idSala, conexao, { id }) {
   if (id !== null && typeof id !== "string") {
     recusar(conexao, "mensagem-invalida");
@@ -245,20 +339,6 @@ function formatoDeEscreverValido({ alvo, x, y, texto }) {
     typeof x === "number" &&
     typeof y === "number"
   );
-}
-
-// Repassa ofertas, respostas e candidatos de voz a outra pessoa da mesma sala. O servidor não lê
-// `dados`; só preenche `de`, para ninguém se passar por outra pessoa.
-function tratarSinal(registro, idSala, conexao, { para, dados }) {
-  const dadosValidos = typeof dados === "object" && dados !== null && !Array.isArray(dados);
-  if (typeof para !== "string" || !dadosValidos) {
-    recusar(conexao, "mensagem-invalida");
-    return;
-  }
-  const destino = registro.conexaoPorId(idSala, para);
-  // Destinatário que acabou de sair: ignorar, não é erro de quem enviou.
-  if (destino === null || destino === conexao) return;
-  enviar(destino, { tipo: "sinal", de: registro.idPorConexao(idSala, conexao), dados });
 }
 
 function enviarLista(registro, idSala) {
@@ -311,7 +391,10 @@ async function servirEstatico(pathname, resposta) {
 
   const tipo = TIPOS_DE_CONTEUDO[path.extname(caminhoArquivo)];
   if (!tipo) return responderNaoEncontrado(resposta);
+  await servirArquivo(caminhoArquivo, tipo, resposta);
+}
 
+async function servirArquivo(caminhoArquivo, tipo, resposta) {
   try {
     const conteudo = await readFile(caminhoArquivo);
     resposta.writeHead(200, { "Content-Type": tipo });
